@@ -2,18 +2,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabaseServerClient";
 
+const TIKTOK_TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/";
+
 function getEnvOrThrow(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing env var: ${name}`);
-  }
-  return value;
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env var: ${name}`);
+  return v;
 }
 
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-
   try {
+    const url = new URL(req.url);
     const code = url.searchParams.get("code");
     const state = url.searchParams.get("state");
 
@@ -24,7 +23,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Missing ?state" }, { status: 400 });
     }
 
-    // Default to /accounts if we can't decode state
+    // Default return path
     let returnTo = "/accounts";
     try {
       const decoded = JSON.parse(
@@ -41,20 +40,25 @@ export async function GET(req: NextRequest) {
     const clientSecret = getEnvOrThrow("TIKTOK_CLIENT_SECRET");
     const redirectUri = getEnvOrThrow("TIKTOK_REDIRECT_URI");
 
-    // 1) Exchange code for access token
-    const tokenRes = await fetch("https://open.tiktokapis.com/v2/oauth/token/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_key: clientKey,
-        client_secret: clientSecret,
-        code,
-        grant_type: "authorization_code",
-        redirect_uri: redirectUri,
-      }),
+    // TikTok expects x-www-form-urlencoded, not JSON
+    const body = new URLSearchParams({
+      client_key: clientKey,
+      client_secret: clientSecret,
+      code,
+      grant_type: "authorization_code",
+      redirect_uri: redirectUri,
     });
 
-    const tokenJson = await tokenRes.json();
+    const tokenRes = await fetch(TIKTOK_TOKEN_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: body.toString(),
+    });
+
+    const tokenJson: any = await tokenRes.json();
+    console.log("[tiktok/callback] token response:", tokenJson);
 
     if (!tokenRes.ok) {
       console.error("[tiktok/callback] Token exchange failed:", tokenJson);
@@ -64,65 +68,71 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // TikTok v2 OAuth response shape (simplified)
-    const {
-      access_token,
-      refresh_token,
-      open_id,
-      expires_in,
-    }: {
-      access_token?: string;
-      refresh_token?: string;
-      open_id?: string;
-      expires_in?: number;
-    } = tokenJson;
+    // Some environments put fields at root, some under `data`
+    const data = tokenJson.data ?? tokenJson;
 
-    if (!open_id) {
-      console.error("[tiktok/callback] Missing open_id in token response:", tokenJson);
+    const accessToken: string | undefined = data.access_token;
+    const refreshToken: string | undefined = data.refresh_token;
+    const openId: string | undefined = data.open_id;
+    const expiresIn: number | undefined = data.expires_in;
+
+    if (!openId) {
+      console.error("[tiktok/callback] Missing open_id in response:", data);
       return NextResponse.json(
         { error: "Missing open_id from TikTok response" },
         { status: 500 }
       );
     }
 
-    // 2) Get current Supabase user (must be logged in)
+    if (!accessToken) {
+      console.error("[tiktok/callback] Missing access_token in response:", data);
+      return NextResponse.json(
+        { error: "Missing access_token from TikTok response" },
+        { status: 500 }
+      );
+    }
+
+    // Make sure user is logged in to Wavv
     const supabase = createSupabaseServerClient();
     const {
       data: { user },
-      error: userError,
+      error: userErr,
     } = await supabase.auth.getUser();
 
-    if (userError || !user) {
-      console.error("[tiktok/callback] No authenticated user:", userError);
-      // NOTE: use absolute URL for redirects from route handlers
+    if (userErr) {
+      console.error("[tiktok/callback] Supabase getUser error:", userErr);
+      return NextResponse.json(
+        { error: "Failed to fetch current user" },
+        { status: 500 }
+      );
+    }
+
+    if (!user) {
+      // Not logged in → send them to login page
       return NextResponse.redirect(new URL("/login", url.origin));
     }
 
-    // 3) Upsert connected_accounts row
-    // IMPORTANT: only use columns that actually exist on the table.
-    // We'll stash tokens inside profile_data JSON for now.
+    // Upsert into connected_accounts
     const { data: upsertRows, error: upsertError } = await supabase
       .from("connected_accounts")
       .upsert(
         {
           user_id: user.id,
           platform: "tiktok",
-          external_user_id: open_id,
-          // keep creator_profile_id null for now; we can wire it later
-          profile_data: {
-            access_token,
-            refresh_token,
-            expires_in,
-            last_token_received_at: new Date().toISOString(),
-          },
+          external_user_id: openId,
+          access_token: accessToken,
+          refresh_token: refreshToken ?? null,
+          username: null,
+          display_name: null,
+          avatar_url: null,
           is_primary: true,
+          last_refreshed_at: new Date().toISOString(),
         },
         {
-          // We want one TikTok connection per user for now
           onConflict: "user_id,platform",
         }
       )
-      .select("*");
+      .select();
 
     if (upsertError) {
       console.error("[tiktok/callback] Supabase upsert error:", upsertError);
@@ -137,7 +147,7 @@ export async function GET(req: NextRequest) {
 
     console.log("[tiktok/callback] Upserted connected_accounts:", upsertRows);
 
-    // 4) Redirect back to where they started (e.g. /accounts)
+    // Redirect back to where they started (e.g. /accounts)
     return NextResponse.redirect(new URL(returnTo, url.origin));
   } catch (err: any) {
     console.error("[tiktok/callback] Unexpected error:", err);
