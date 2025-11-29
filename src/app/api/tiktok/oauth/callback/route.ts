@@ -1,6 +1,7 @@
 // src/app/api/tiktok/oauth/callback/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabaseServerClient";
+import { cookies } from "next/headers";
+import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 
 const TIKTOK_TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/";
 
@@ -40,7 +41,7 @@ export async function GET(req: NextRequest) {
     const clientSecret = getEnvOrThrow("TIKTOK_CLIENT_SECRET");
     const redirectUri = getEnvOrThrow("TIKTOK_REDIRECT_URI");
 
-    // TikTok expects x-www-form-urlencoded, not JSON
+    // TikTok expects x-www-form-urlencoded
     const body = new URLSearchParams({
       client_key: clientKey,
       client_secret: clientSecret,
@@ -68,7 +69,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Some environments put fields at root, some under `data`
+    // Some envs nest under `data`, some don't
     const data = tokenJson.data ?? tokenJson;
 
     const accessToken: string | undefined = data.access_token;
@@ -77,7 +78,7 @@ export async function GET(req: NextRequest) {
     const expiresIn: number | undefined = data.expires_in;
 
     if (!openId) {
-      console.error("[tiktok/callback] Missing open_id in response:", data);
+      console.error("[tiktok/callback] Missing open_id:", data);
       return NextResponse.json(
         { error: "Missing open_id from TikTok response" },
         { status: 500 }
@@ -85,34 +86,37 @@ export async function GET(req: NextRequest) {
     }
 
     if (!accessToken) {
-      console.error("[tiktok/callback] Missing access_token in response:", data);
+      console.error("[tiktok/callback] Missing access_token:", data);
       return NextResponse.json(
         { error: "Missing access_token from TikTok response" },
         { status: 500 }
       );
     }
 
-    // Make sure user is logged in to Wavv
-    const supabase = createSupabaseServerClient();
+    // IMPORTANT: use cookie-aware route handler client, not service-role client
+    const supabase = createRouteHandlerClient({ cookies });
+
     const {
       data: { user },
       error: userErr,
     } = await supabase.auth.getUser();
 
     if (userErr) {
-      console.error("[tiktok/callback] Supabase getUser error:", userErr);
+      console.error("[tiktok/callback] getUser error:", userErr);
       return NextResponse.json(
-        { error: "Failed to fetch current user" },
+        {
+          error: "Failed to fetch current user",
+          details: userErr.message ?? String(userErr),
+        },
         { status: 500 }
       );
     }
 
     if (!user) {
-      // Not logged in → send them to login page
+      // Not logged in → send them to login
       return NextResponse.redirect(new URL("/login", url.origin));
     }
 
-    // Upsert into connected_accounts
     const { data: upsertRows, error: upsertError } = await supabase
       .from("connected_accounts")
       .upsert(
@@ -147,7 +151,7 @@ export async function GET(req: NextRequest) {
 
     console.log("[tiktok/callback] Upserted connected_accounts:", upsertRows);
 
-    // Redirect back to where they started (e.g. /accounts)
+    // Back to where they started
     return NextResponse.redirect(new URL(returnTo, url.origin));
   } catch (err: any) {
     console.error("[tiktok/callback] Unexpected error:", err);
