@@ -27,7 +27,9 @@ export async function GET(req: NextRequest) {
       const decoded = JSON.parse(
         Buffer.from(state, "base64url").toString("utf8")
       );
-      if (decoded?.r) returnTo = decoded.r;
+      if (decoded?.r && typeof decoded.r === "string") {
+        returnTo = decoded.r;
+      }
     } catch (err) {
       console.warn("State decode failed:", err);
     }
@@ -75,7 +77,9 @@ export async function GET(req: NextRequest) {
     } = await supabase.auth.getUser();
 
     if (!user) {
-      return NextResponse.redirect("/login");
+      // Build an absolute URL for /login
+      const loginUrl = new URL("/login", req.nextUrl.origin);
+      return NextResponse.redirect(loginUrl);
     }
 
     // Insert or update connected_accounts
@@ -105,8 +109,9 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Redirect them to your accounts page (or wherever they started)
-    return NextResponse.redirect(returnTo);
+    // Redirect back to the original page (absolute URL)
+    const finalUrl = new URL(returnTo, req.nextUrl.origin);
+    return NextResponse.redirect(finalUrl);
   } catch (err: any) {
     console.error("Callback error:", err);
     return NextResponse.json(
