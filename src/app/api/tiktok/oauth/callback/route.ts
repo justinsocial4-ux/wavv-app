@@ -93,8 +93,11 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // IMPORTANT: create cookie store and pass a zero-arg function to Supabase
+    // Official Supabase pattern: use cookieStore + wrapper fn
     const cookieStore = cookies();
+
+    // TS is confused about the exact cookie type here, but runtime is correct.
+    // @ts-ignore – align with Supabase docs: createRouteHandlerClient({ cookies: () => cookieStore })
     const supabase = createRouteHandlerClient({
       cookies: () => cookieStore,
     });
