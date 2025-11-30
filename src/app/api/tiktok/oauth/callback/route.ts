@@ -93,8 +93,11 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // IMPORTANT: use cookie-aware route handler client, not service-role client
-    const supabase = createRouteHandlerClient({ cookies });
+    // IMPORTANT: create cookie store and pass a zero-arg function to Supabase
+    const cookieStore = cookies();
+    const supabase = createRouteHandlerClient({
+      cookies: () => cookieStore,
+    });
 
     const {
       data: { user },
