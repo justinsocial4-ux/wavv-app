@@ -48,6 +48,9 @@ export default function AccountsPage() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<StatusState>({ type: "idle" });
 
+  // NEW: track current Supabase user id for TikTok connect URL
+  const [userId, setUserId] = useState<string | null>(null);
+
   // New profile form state
   const [newDisplayName, setNewDisplayName] = useState("");
   const [newHandle, setNewHandle] = useState("");
@@ -70,9 +73,13 @@ export default function AccountsPage() {
         type: "error",
         message: "You must be logged in to view creator profiles.",
       });
+      setUserId(null);
       setLoading(false);
       return;
     }
+
+    // NEW: store user.id so we can pass it into TikTok OAuth state
+    setUserId(user.id);
 
     const { data, error } = await supabase
       .from("creator_profiles")
@@ -163,10 +170,7 @@ export default function AccountsPage() {
     // 1) If user typed one, slugify it
     // 2) Else derive from display name
     // 3) Fallback to "creator" if everything fails
-    const base =
-      rawHandle ||
-      slugify(display) ||
-      "creator";
+    const base = rawHandle || slugify(display) || "creator";
 
     const finalHandle = slugify(base);
 
@@ -175,7 +179,7 @@ export default function AccountsPage() {
         user_id: user.id,
         display_name: display,
         handle: finalHandle, // 🔥 required NOT NULL column
-        slug: finalHandle,   // keep slug in sync for now
+        slug: finalHandle, // keep slug in sync for now
         bio: bio || null,
       },
     ]);
@@ -286,6 +290,14 @@ export default function AccountsPage() {
 
   const hasProfiles = profiles.length > 0;
 
+  // NEW: build TikTok connect href using userId
+  const connectTikTokHref =
+    userId != null
+      ? `/api/tiktok/oauth/start?returnTo=/accounts&uid=${encodeURIComponent(
+          userId
+        )}`
+      : null;
+
   // ---------- RENDER ----------
   return (
     <AuthGate>
@@ -320,6 +332,35 @@ export default function AccountsPage() {
               {status.message}
             </div>
           )}
+
+          {/* NEW: Connect TikTok card */}
+          <section className="mb-8 rounded-2xl border border-gray-800 bg-gray-900/60 px-5 py-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-gray-400">
+                Connect TikTok
+              </p>
+              <p className="mt-1 text-sm text-gray-300">
+                Link your TikTok account so Wavv can ingest posts and analytics.
+              </p>
+            </div>
+            <div>
+              <a
+                href={connectTikTokHref ?? "#"}
+                onClick={(e) => {
+                  if (!connectTikTokHref) {
+                    e.preventDefault();
+                  }
+                }}
+                className={`inline-flex items-center rounded-full border px-4 py-2 text-xs font-medium transition ${
+                  connectTikTokHref
+                    ? "border-gray-700 bg-gradient-to-r from-gray-900 to-gray-800 text-gray-100 hover:border-gray-400 hover:from-gray-800 hover:to-gray-700"
+                    : "border-gray-800 text-gray-500 cursor-not-allowed opacity-60"
+                }`}
+              >
+                Connect TikTok
+              </a>
+            </div>
+          </section>
 
           {/* New creator profile form */}
           <section className="mb-8 rounded-2xl border border-gray-800 bg-gradient-to-b from-gray-950 to-gray-900 px-5 py-4">

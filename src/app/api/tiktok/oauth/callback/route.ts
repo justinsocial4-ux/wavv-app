@@ -1,7 +1,6 @@
 // src/app/api/tiktok/oauth/callback/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import { createSupabaseServerClient } from "@/lib/supabaseServerClient";
 
 const TIKTOK_TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/";
 
@@ -24,17 +23,31 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Missing ?state" }, { status: 400 });
     }
 
-    // Default return path
+    // Default return path + user id from state
     let returnTo = "/accounts";
+    let userIdFromState: string | null = null;
+
     try {
       const decoded = JSON.parse(
         Buffer.from(state, "base64url").toString("utf8")
       );
+
       if (decoded?.r && typeof decoded.r === "string") {
         returnTo = decoded.r;
       }
+      if (decoded?.uid && typeof decoded.uid === "string") {
+        userIdFromState = decoded.uid;
+      }
     } catch (err) {
       console.warn("[tiktok/callback] Failed to decode state:", err);
+    }
+
+    if (!userIdFromState) {
+      console.error("[tiktok/callback] Missing user id in state");
+      return NextResponse.json(
+        { error: "Missing user id when returning from TikTok" },
+        { status: 400 }
+      );
     }
 
     const clientKey = getEnvOrThrow("TIKTOK_CLIENT_KEY");
@@ -93,41 +106,14 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Official Supabase pattern: use cookieStore + wrapper fn
-    const cookieStore = cookies();
-
-    // TS is confused about the exact cookie type here, but runtime is correct.
-    // @ts-ignore – align with Supabase docs: createRouteHandlerClient({ cookies: () => cookieStore })
-    const supabase = createRouteHandlerClient({
-      cookies: () => cookieStore,
-    });
-
-    const {
-      data: { user },
-      error: userErr,
-    } = await supabase.auth.getUser();
-
-    if (userErr) {
-      console.error("[tiktok/callback] getUser error:", userErr);
-      return NextResponse.json(
-        {
-          error: "Failed to fetch current user",
-          details: userErr.message ?? String(userErr),
-        },
-        { status: 500 }
-      );
-    }
-
-    if (!user) {
-      // Not logged in → send them to login
-      return NextResponse.redirect(new URL("/login", url.origin));
-    }
+    // Use your existing server-side Supabase client (service role)
+    const supabase = await createSupabaseServerClient();
 
     const { data: upsertRows, error: upsertError } = await supabase
       .from("connected_accounts")
       .upsert(
         {
-          user_id: user.id,
+          user_id: userIdFromState,
           platform: "tiktok",
           external_user_id: openId,
           access_token: accessToken,
