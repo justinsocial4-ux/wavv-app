@@ -109,26 +109,61 @@ export async function GET(req: NextRequest) {
     // Use your existing server-side Supabase client (service role)
     const supabase = await createSupabaseServerClient();
 
-    // IMPORTANT: Only use columns that actually exist in `connected_accounts`
-    // (no access_token / refresh_token for now)
-    const { data: upsertRows, error: upsertError } = await supabase
+    // -------- MANUAL UPSERT: find existing row for (user_id, 'tiktok') --------
+    const {
+      data: existingRow,
+      error: existingError,
+    } = await supabase
       .from("connected_accounts")
-      .upsert(
+      .select("id")
+      .eq("user_id", userIdFromState)
+      .eq("platform", "tiktok")
+      .maybeSingle();
+
+    if (existingError && existingError.code !== "PGRST116") {
+      // PGRST116 = no rows found for single(), but maybeSingle() should hide that.
+      console.error(
+        "[tiktok/callback] Error checking existing connected_account:",
+        existingError
+      );
+      return NextResponse.json(
         {
-          user_id: userIdFromState,
-          platform: "tiktok",
-          external_user_id: openId,
-          username: null,
-          display_name: null,
-          avatar_url: null,
-          is_primary: true,
-          last_refreshed_at: new Date().toISOString(),
+          error: "Failed checking existing TikTok account in Supabase",
+          details: existingError.message,
         },
-        {
-          onConflict: "user_id,platform",
-        }
-      )
-      .select();
+        { status: 500 }
+      );
+    }
+
+    const payload = {
+      user_id: userIdFromState,
+      platform: "tiktok",
+      external_user_id: openId,
+      username: null,
+      display_name: null,
+      avatar_url: null,
+      is_primary: true,
+      last_refreshed_at: new Date().toISOString(),
+    };
+
+    let upsertResult;
+
+    if (existingRow?.id) {
+      // UPDATE existing
+      upsertResult = await supabase
+        .from("connected_accounts")
+        .update(payload)
+        .eq("id", existingRow.id)
+        .select();
+    } else {
+      // INSERT new
+      upsertResult = await supabase
+        .from("connected_accounts")
+        .insert([payload])
+        .select();
+    }
+
+    const { data: upsertRows, error: upsertError } = upsertResult;
 
     if (upsertError) {
       console.error("[tiktok/callback] Supabase upsert error:", upsertError);
