@@ -109,6 +109,8 @@ export async function GET(req: NextRequest) {
     // Use your existing server-side Supabase client (service role)
     const supabase = await createSupabaseServerClient();
 
+    // IMPORTANT: Only use columns that actually exist in `connected_accounts`
+    // (no access_token / refresh_token for now)
     const { data: upsertRows, error: upsertError } = await supabase
       .from("connected_accounts")
       .upsert(
@@ -116,8 +118,6 @@ export async function GET(req: NextRequest) {
           user_id: userIdFromState,
           platform: "tiktok",
           external_user_id: openId,
-          access_token: accessToken,
-          refresh_token: refreshToken ?? null,
           username: null,
           display_name: null,
           avatar_url: null,
