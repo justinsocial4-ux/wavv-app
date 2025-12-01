@@ -8,7 +8,7 @@ const TIKTOK_CLIENT_KEY = process.env.TIKTOK_CLIENT_KEY!;
 const TIKTOK_CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET!;
 const TIKTOK_REDIRECT_URI = process.env.TIKTOK_REDIRECT_URI!;
 
-// Supabase admin client (server-only, NOT exposed to browser)
+// Supabase admin client (server-only)
 const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 function buildRedirect(req: NextRequest, path: string) {
@@ -27,7 +27,7 @@ function decodeState(rawState: string | null): {
     return { userId, returnTo };
   }
 
-  // 1) Try treating state as a querystring: "uid=...&returnTo=/accounts"
+  // 1) Try treating state as querystring: "uid=...&returnTo=/accounts"
   try {
     const sp = new URLSearchParams(rawState);
     const uidParam =
@@ -43,7 +43,7 @@ function decodeState(rawState: string | null): {
     console.warn("Failed to parse state as URLSearchParams:", e);
   }
 
-  // 2) If that didn't work, try base64-encoded JSON (TikTok Login Kit style)
+  // 2) Try base64-encoded JSON (what we saw in your logs)
   if (!userId) {
     try {
       const decoded = Buffer.from(rawState, "base64").toString("utf8");
@@ -91,13 +91,14 @@ export async function GET(req: NextRequest) {
   try {
     //
     // 1) Exchange code for access_token / refresh_token / open_id
+    //    Using TikTok Open API v2 endpoint and JSON body
     //
-    const tokenRes = await fetch("https://open-api.tiktok.com/oauth/token/", {
+    const tokenRes = await fetch("https://open.tiktokapis.com/v2/oauth/token/", {
       method: "POST",
       headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Type": "application/json",
       },
-      body: new URLSearchParams({
+      body: JSON.stringify({
         client_key: TIKTOK_CLIENT_KEY,
         client_secret: TIKTOK_CLIENT_SECRET,
         code,
@@ -117,12 +118,9 @@ export async function GET(req: NextRequest) {
 
     const tokenData = tokenJson.data ?? tokenJson;
 
-    const access_token: string | undefined =
-      tokenData.access_token ?? tokenData.accessToken;
-    const refresh_token: string | undefined =
-      tokenData.refresh_token ?? tokenData.refreshToken;
-    const open_id: string | undefined =
-      tokenData.open_id ?? tokenData.openId;
+    const access_token: string | undefined = tokenData.access_token;
+    const refresh_token: string | undefined = tokenData.refresh_token;
+    const open_id: string | undefined = tokenData.open_id;
 
     if (!access_token || !refresh_token || !open_id) {
       console.error("Missing fields from TikTok token response:", tokenJson);
@@ -131,6 +129,7 @@ export async function GET(req: NextRequest) {
 
     //
     // 2) Fetch user info (display_name, username, avatar_url)
+    //    Using the endpoint you specified: open-api.tiktok.com/user/info/
     //
     let display_name: string | null = null;
     let username: string | null = null;
@@ -237,7 +236,7 @@ export async function GET(req: NextRequest) {
     }
 
     //
-    // 4) Redirect back to Accounts (or state.returnTo)
+    // 4) Redirect back to Accounts
     //
     return buildRedirect(req, `${returnTo}?connected=tiktok`);
   } catch (e) {
