@@ -1,4 +1,4 @@
-// src/app/api/tiktok/oauth/callback/route.ts
+// app/api/tiktok/oauth/callback/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
@@ -14,6 +14,56 @@ const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 function buildRedirect(req: NextRequest, path: string) {
   const origin = req.nextUrl.origin;
   return NextResponse.redirect(new URL(path, origin));
+}
+
+function decodeState(rawState: string | null): {
+  userId: string | null;
+  returnTo: string;
+} {
+  let userId: string | null = null;
+  let returnTo = "/accounts";
+
+  if (!rawState) {
+    return { userId, returnTo };
+  }
+
+  // 1) Try treating state as a querystring: "uid=...&returnTo=/accounts"
+  try {
+    const sp = new URLSearchParams(rawState);
+    const uidParam =
+      sp.get("uid") || sp.get("user_id") || sp.get("u");
+    if (uidParam) {
+      userId = uidParam;
+    }
+    const rtParam = sp.get("returnTo") || sp.get("r");
+    if (rtParam) {
+      returnTo = rtParam;
+    }
+  } catch (e) {
+    console.warn("Failed to parse state as URLSearchParams:", e);
+  }
+
+  // 2) If that didn't work, try base64-encoded JSON (TikTok Login Kit style)
+  if (!userId) {
+    try {
+      const decoded = Buffer.from(rawState, "base64").toString("utf8");
+      console.log("TIKTOK STATE DECODED:", decoded);
+
+      const json = JSON.parse(decoded);
+      userId =
+        json.uid ||
+        json.user_id ||
+        json.u ||
+        null;
+      if (json.returnTo || json.r) {
+        returnTo = json.returnTo || json.r;
+      }
+    } catch (e) {
+      console.warn("Failed to decode state as base64 JSON:", e);
+    }
+  }
+
+  return { userId, returnTo };
 }
 
 export async function GET(req: NextRequest) {
@@ -32,14 +82,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  if (!state) {
-    return buildRedirect(req, "/accounts?error=missing_state");
-  }
-
-  // state was constructed as URLSearchParams string: uid + returnTo
-  const stateParams = new URLSearchParams(state);
-  const userId = stateParams.get("uid");
-  const returnTo = stateParams.get("returnTo") || "/accounts";
+  const { userId, returnTo } = decodeState(state);
 
   if (!userId) {
     return buildRedirect(req, "/accounts?error=missing_user_id");
@@ -104,8 +147,6 @@ export async function GET(req: NextRequest) {
           body: JSON.stringify({
             open_id,
             access_token,
-            // Depending on TikTok config this may be ignored,
-            // but we send it anyway.
             fields: ["display_name", "username", "avatar_url"],
           }),
         }
@@ -127,8 +168,8 @@ export async function GET(req: NextRequest) {
 
         const dataRoot = userInfoJson.data ?? userInfoJson;
 
-        // Handle several possible shapes:
-        // { data: { display_name, username, avatar_url, ... } }
+        // Possible shapes:
+        // { data: { display_name, username, avatar_url } }
         // { data: { user: { ... } } }
         // { data: { user_info: { nickname, unique_id, avatar } } }
         // { data: { user_list: [ { ... } ] } }
@@ -159,7 +200,10 @@ export async function GET(req: NextRequest) {
           null;
       }
     } catch (userInfoError) {
-      console.error("Unexpected error while fetching TikTok user info:", userInfoError);
+      console.error(
+        "Unexpected error while fetching TikTok user info:",
+        userInfoError
+      );
     }
 
     //
@@ -186,7 +230,10 @@ export async function GET(req: NextRequest) {
 
     if (upsertError) {
       console.error("Supabase upsert failed:", upsertError);
-      return buildRedirect(req, "/accounts?error=connected_account_upsert_failed");
+      return buildRedirect(
+        req,
+        "/accounts?error=connected_account_upsert_failed"
+      );
     }
 
     //
