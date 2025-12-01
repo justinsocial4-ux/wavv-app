@@ -1,4 +1,3 @@
-// src/app/accounts/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState, FormEvent } from "react";
@@ -37,7 +36,7 @@ type StatusState =
   | { type: "error"; message: string }
   | { type: "success"; message: string };
 
-// Simple slugify helper: "Marcela Faria" -> "marcela.faria"
+// Simple slugify helper
 function slugify(value: string): string {
   return value
     .toLowerCase()
@@ -87,7 +86,7 @@ export default function AccountsPage() {
       return;
     }
 
-    // Load creator profiles (with any attached accounts)
+    // Load creator profiles
     const { data: profileData, error: profileError } = await supabase
       .from("creator_profiles")
       .select(
@@ -133,7 +132,7 @@ export default function AccountsPage() {
 
     setProfiles(normalizedProfiles);
 
-    // Load global connected accounts (auth layer)
+    // Load global connected accounts
     const { data: accountsData, error: accountsError } = await supabase
       .from("connected_accounts")
       .select(
@@ -156,7 +155,6 @@ export default function AccountsPage() {
 
     if (accountsError) {
       console.error("Error loading connected_accounts:", accountsError);
-      // We still show profiles even if this fails
     }
 
     setConnectedAccounts((accountsData ?? []) as ConnectedAccount[]);
@@ -382,22 +380,6 @@ export default function AccountsPage() {
                 which channels matter for a given goal.
               </p>
             </div>
-
-            {/* Quick TikTok connect CTA */}
-            <div className="rounded-2xl border border-gray-800 bg-gray-900/70 px-4 py-3 text-sm">
-              <p className="text-[11px] uppercase tracking-wide text-gray-400">
-                Connect TikTok
-              </p>
-              <p className="mt-1 text-xs text-gray-400">
-                Link your TikTok account so Wavv can ingest posts and analytics.
-              </p>
-              <a
-                href="/api/tiktok/oauth/start?returnTo=/accounts"
-                className="mt-2 inline-flex items-center justify-center rounded-full border border-gray-700 bg-gradient-to-r from-gray-900 to-gray-800 px-4 py-1.5 text-xs font-medium text-gray-100 shadow-sm transition hover:border-gray-400 hover:from-gray-800 hover:to-gray-700"
-              >
-                Connect TikTok
-              </a>
-            </div>
           </div>
 
           {/* Status banner */}
@@ -553,7 +535,7 @@ export default function AccountsPage() {
             </div>
           </section>
 
-          {/* Profiles & accounts list (factored out) */}
+          {/* Profiles & accounts list */}
           <ProfileList
             loading={loading}
             profiles={profiles}

@@ -18,30 +18,32 @@ src/app/accounts/page.tsx
 
 CHECKPOINT
 
-Current high-level goal: Get TikTok OAuth Login Kit flow working end-to-end and persisting a connected account with real user data.
+Current goal
+Get TikTok OAuth callback to successfully upsert into connected_accounts in prod.
 
-Step just completed: Cleaned up start/route.ts to use a valid Login Kit scope (user.info.basic) and removed syntax errors from extra bracket/duplicate state line.
+Step just completed
+Observed Supabase error: no unique or exclusion constraint matching the ON CONFLICT specification.
 
-Files touched: src/app/api/tiktok/oauth/start/route.ts
+Files touched
+None (this is purely a DB constraint mismatch with existing code).
 
-APIs/routes involved: GET /api/tiktok/oauth/start → TikTok https://www.tiktok.com/v2/auth/authorize/
+APIs/routes involved
+GET /api/tiktok/oauth/callback → Supabase connected_accounts upsert.
 
-Env vars referenced: TIKTOK_CLIENT_KEY, TIKTOK_REDIRECT_URI
+Env vars referenced
+Same TikTok + Supabase envs as before; no changes required.
 
-Assumptions made: Supabase auth cookie is present when clicking Connect TikTok; TikTok app is configured for Login Kit with user.info.basic scope enabled.
+Assumptions
 
-TikTok/Supabase/Auth state summary: Token exchange + callback are wired; previous issue was TikTok not returning open_id due to invalid scope string and local syntax error preventing build.
+public.connected_accounts has a user_id column.
 
-Direction Log:
+There are no duplicate (user_id, platform) rows yet.
 
-Previous step paused due to TS compile error in start/route.ts.
+Next step (plain English)
+Add a unique constraint on (user_id, platform) in Supabase, then re-run the TikTok connect flow and confirm you see a connected TikTok account on /accounts.
 
-Blocker: stray ]; and duplicated state line after modifying scope.
+TikTok/Supabase/Auth state summary
+OAuth flow reaches callback and token exchange succeeds; failure is now only at the “upsert to connected_accounts” step due to missing unique constraint.
 
-Now doing: fix start route syntax + align scope with Login Kit.
-
-Will resume next: verify OAuth flow from /accounts, then confirm connected_accounts row has open_id, username, and display_name.
-
-CURRENT THREAD: TikTok OAuth → Start Route Scopes → Callback User Mapping → Accounts UI
-
-Try the flow again after this paste + save, and tell me exactly what screen you see after clicking Connect TikTok.
+Direction Log
+We’ve moved from “schema missing token columns” → “schema missing unique constraint for upsert.” Once constraint is added, we should finally get a clean round-trip and can then polish the Accounts UI + ADHD-friendly flows.
