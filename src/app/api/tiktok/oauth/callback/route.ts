@@ -27,40 +27,29 @@ function decodeState(rawState: string | null): {
     return { userId, returnTo };
   }
 
-  // 1) Try treating state as querystring: "uid=...&returnTo=/accounts"
+  // Try raw querystring first
   try {
     const sp = new URLSearchParams(rawState);
     const uidParam =
       sp.get("uid") || sp.get("user_id") || sp.get("u");
-    if (uidParam) {
-      userId = uidParam;
-    }
-    const rtParam = sp.get("returnTo") || sp.get("r");
-    if (rtParam) {
-      returnTo = rtParam;
-    }
-  } catch (e) {
-    console.warn("Failed to parse state as URLSearchParams:", e);
-  }
+    if (uidParam) userId = uidParam;
 
-  // 2) Try base64-encoded JSON (what we saw in your logs)
+    const rtParam = sp.get("returnTo") || sp.get("r");
+    if (rtParam) returnTo = rtParam;
+  } catch {}
+
+  // Fallback: base64 JSON (what TikTok Login Kit actually sends)
   if (!userId) {
     try {
       const decoded = Buffer.from(rawState, "base64").toString("utf8");
       console.log("TIKTOK STATE DECODED:", decoded);
-
       const json = JSON.parse(decoded);
-      userId =
-        json.uid ||
-        json.user_id ||
-        json.u ||
-        null;
+
+      userId = json.uid || json.user_id || json.u || null;
       if (json.returnTo || json.r) {
         returnTo = json.returnTo || json.r;
       }
-    } catch (e) {
-      console.warn("Failed to decode state as base64 JSON:", e);
-    }
+    } catch {}
   }
 
   return { userId, returnTo };
@@ -74,7 +63,6 @@ export async function GET(req: NextRequest) {
   const state = searchParams.get("state");
   const error = searchParams.get("error");
 
-  // Handle error / cancel from TikTok
   if (error || !code) {
     return buildRedirect(
       req,
@@ -83,28 +71,31 @@ export async function GET(req: NextRequest) {
   }
 
   const { userId, returnTo } = decodeState(state);
-
   if (!userId) {
     return buildRedirect(req, "/accounts?error=missing_user_id");
   }
 
   try {
     //
-    // 1) Exchange code for access_token / refresh_token / open_id
-    //    TikTok v2 endpoint with x-www-form-urlencoded body
+    // 1) TikTok Token Exchange — MUST BE exact URL encoding
     //
+    const tokenBody =
+      "client_key=" +
+      encodeURIComponent(TIKTOK_CLIENT_KEY) +
+      "&client_secret=" +
+      encodeURIComponent(TIKTOK_CLIENT_SECRET) +
+      "&code=" +
+      encodeURIComponent(code) +
+      "&grant_type=authorization_code" +
+      "&redirect_uri=" +
+      encodeURIComponent(TIKTOK_REDIRECT_URI);
+
     const tokenRes = await fetch("https://open.tiktokapis.com/v2/oauth/token/", {
       method: "POST",
       headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
+        "content-type": "application/x-www-form-urlencoded"
       },
-      body: new URLSearchParams({
-        client_key: TIKTOK_CLIENT_KEY,
-        client_secret: TIKTOK_CLIENT_SECRET,
-        code,
-        grant_type: "authorization_code",
-        redirect_uri: TIKTOK_REDIRECT_URI,
-      }),
+      body: tokenBody,
     });
 
     if (!tokenRes.ok) {
@@ -128,7 +119,7 @@ export async function GET(req: NextRequest) {
     }
 
     //
-    // 2) Fetch user info (display_name, username, avatar_url)
+    // 2) Fetch TikTok User Info
     //
     let display_name: string | null = null;
     let username: string | null = null;
@@ -158,54 +149,28 @@ export async function GET(req: NextRequest) {
           body
         );
       } else {
-        const userInfoJson: any = await userInfoRes.json();
-        console.log(
-          "TIKTOK USER INFO RAW:",
-          JSON.stringify(userInfoJson, null, 2)
-        );
+        const userInfoJson = await userInfoRes.json();
+        console.log("TIKTOK USER INFO RAW:", JSON.stringify(userInfoJson, null, 2));
 
-        const dataRoot = userInfoJson.data ?? userInfoJson;
+        const root = userInfoJson.data ?? userInfoJson;
 
-        // Possible shapes:
-        // { data: { display_name, username, avatar_url } }
-        // { data: { user: { ... } } }
-        // { data: { user_info: { nickname, unique_id, avatar } } }
-        // { data: { user_list: [ { ... } ] } }
-        let userNode: any = dataRoot;
-
-        if (dataRoot.user) {
-          userNode = dataRoot.user;
-        } else if (dataRoot.user_info) {
-          userNode = dataRoot.user_info;
-        } else if (Array.isArray(dataRoot.user_list) && dataRoot.user_list[0]) {
-          userNode = dataRoot.user_list[0];
+        let u: any = root;
+        if (root.user) u = root.user;
+        if (root.user_info) u = root.user_info;
+        if (Array.isArray(root.user_list) && root.user_list[0]) {
+          u = root.user_list[0];
         }
 
-        display_name =
-          userNode.display_name ??
-          userNode.nickname ??
-          null;
-
-        username =
-          userNode.username ??
-          userNode.unique_id ??
-          null;
-
-        avatar_url =
-          userNode.avatar_url ??
-          userNode.avatar ??
-          userNode.avatar_medium ??
-          null;
+        display_name = u.display_name ?? u.nickname ?? null;
+        username = u.username ?? u.unique_id ?? null;
+        avatar_url = u.avatar_url ?? u.avatar ?? u.avatar_medium ?? null;
       }
-    } catch (userInfoError) {
-      console.error(
-        "Unexpected error while fetching TikTok user info:",
-        userInfoError
-      );
+    } catch (err) {
+      console.error("Unexpected TikTok user info error:", err);
     }
 
     //
-    // 3) Upsert into connected_accounts
+    // 3) Upsert connected account
     //
     const { error: upsertError } = await supabaseAdmin
       .from("connected_accounts")
@@ -228,14 +193,11 @@ export async function GET(req: NextRequest) {
 
     if (upsertError) {
       console.error("Supabase upsert failed:", upsertError);
-      return buildRedirect(
-        req,
-        "/accounts?error=connected_account_upsert_failed"
-      );
+      return buildRedirect(req, "/accounts?error=connected_account_upsert_failed");
     }
 
     //
-    // 4) Redirect back to Accounts
+    // 4) Redirect back to accounts
     //
     return buildRedirect(req, `${returnTo}?connected=tiktok`);
   } catch (e) {
@@ -244,5 +206,4 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// If TikTok ever calls this endpoint with POST instead of GET
 export { GET as POST };
