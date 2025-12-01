@@ -16,15 +16,22 @@ export async function GET(req: NextRequest) {
     const clientKey = getEnvOrThrow("TIKTOK_CLIENT_KEY");
     const redirectUri = getEnvOrThrow("TIKTOK_REDIRECT_URI");
 
-    // Optional return path, defaults to /accounts
     const url = new URL(req.url);
+
+    // Where to go back to after callback
     const returnTo = url.searchParams.get("returnTo") ?? "/accounts";
 
-    // Pack minimal state so callback knows where to go back to
-    const statePayload = {
+    // We EXPECT the frontend to pass uid once it knows it
+    const uid = url.searchParams.get("uid");
+
+    const statePayload: Record<string, any> = {
       r: returnTo,
       ts: Date.now(),
     };
+
+    if (uid) {
+      statePayload.uid = uid;
+    }
 
     const state = Buffer.from(
       JSON.stringify(statePayload),
@@ -36,15 +43,13 @@ export async function GET(req: NextRequest) {
     authUrl.searchParams.set("redirect_uri", redirectUri);
     authUrl.searchParams.set("response_type", "code");
 
-    // IMPORTANT: Login Kit scope — this is what makes TikTok return open_id
+    // Keep scopes tight: Login Kit basics
     authUrl.searchParams.set("scope", "user.info.basic");
-
     authUrl.searchParams.set("state", state);
 
     return NextResponse.redirect(authUrl.toString());
   } catch (err: any) {
     console.error("[tiktok/oauth/start] Error building auth URL:", err);
-
     return NextResponse.json(
       {
         error: "TikTok OAuth is not configured correctly.",
