@@ -27,6 +27,21 @@ type ConnectedAccountsSectionProps = {
 
 type ButtonState = "idle" | "loading" | "error";
 
+function getAccountDisplayName(acct: ConnectedAccount | null | undefined) {
+  if (!acct) return "(no name)";
+  return (
+    acct.display_name ||
+    acct.username ||
+    acct.external_user_id ||
+    "(no name)"
+  );
+}
+
+function getAccountInitial(acct: ConnectedAccount | null | undefined) {
+  const name = getAccountDisplayName(acct);
+  return name.charAt(0).toUpperCase();
+}
+
 export function ConnectedAccountsSection({
   accounts,
   loading,
@@ -81,13 +96,7 @@ export function ConnectedAccountsSection({
   const tiktokLinkedProfiles: string[] =
     tiktokAccount?.profile_ids?.map((id) => profileNamesById[id] || id) ?? [];
 
-  // Nice display helpers
-  const tiktokName =
-    tiktokAccount?.display_name ??
-    tiktokAccount?.username ??
-    (tiktokAccount?.external_user_id
-      ? `ID: ${tiktokAccount.external_user_id.slice(0, 8)}…`
-      : null);
+  const tiktokName = hasTikTok ? getAccountDisplayName(tiktokAccount) : null;
 
   const tiktokHandle =
     tiktokAccount?.username != null && tiktokAccount.username !== ""
@@ -133,13 +142,21 @@ export function ConnectedAccountsSection({
         <div className="rounded-xl border border-gray-800 bg-black/40 px-4 py-3">
           <div className="mb-2 flex items-center justify-between gap-2">
             <div className="flex items-center gap-3">
-              {hasTikTok && tiktokAccount?.avatar_url && (
-                <img
-                  src={tiktokAccount.avatar_url}
-                  alt={tiktokName ?? "TikTok account"}
-                  className="h-9 w-9 rounded-full object-cover"
-                />
-              )}
+              <div className="h-9 w-9 rounded-full overflow-hidden bg-gray-800 flex items-center justify-center">
+                {hasTikTok && tiktokAccount?.avatar_url ? (
+                  <img
+                    src={tiktokAccount.avatar_url}
+                    alt={tiktokName ?? "TikTok account"}
+                    className="h-full w-full object-cover"
+                  />
+                ) : hasTikTok ? (
+                  <span className="text-xs text-gray-300">
+                    {getAccountInitial(tiktokAccount)}
+                  </span>
+                ) : (
+                  <span className="text-xs text-gray-500">TT</span>
+                )}
+              </div>
               <div>
                 <p className="text-[11px] uppercase tracking-wide text-gray-400">
                   TikTok

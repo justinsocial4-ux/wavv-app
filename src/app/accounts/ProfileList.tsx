@@ -46,6 +46,20 @@ function formatDate(iso: string | null | undefined) {
   return d.toLocaleString();
 }
 
+function getAccountDisplayName(acct: ConnectedAccount) {
+  return (
+    acct.display_name ||
+    acct.username ||
+    acct.external_user_id ||
+    "(no name)"
+  );
+}
+
+function getAccountInitial(acct: ConnectedAccount) {
+  const name = getAccountDisplayName(acct);
+  return name.charAt(0).toUpperCase();
+}
+
 export function ProfileList({
   loading,
   profiles,
@@ -142,10 +156,7 @@ export function ProfileList({
                       {availableAccounts.map((acct) => (
                         <option key={acct.id} value={acct.id}>
                           {acct.platform.toUpperCase()} ·{" "}
-                          {acct.display_name ??
-                            acct.username ??
-                            acct.external_user_id?.slice(0, 8) ??
-                            "Unnamed"}
+                          {getAccountDisplayName(acct)}
                         </option>
                       ))}
                     </select>
@@ -187,20 +198,26 @@ export function ProfileList({
                     className="flex flex-col justify-between gap-3 rounded-xl border border-gray-800 bg-black/40 px-4 py-3 md:flex-row md:items-center"
                   >
                     <div className="flex items-center gap-3">
-                      {acct.avatar_url && (
-                        <img
-                          src={acct.avatar_url}
-                          alt={acct.display_name ?? acct.username ?? ""}
-                          className="h-9 w-9 rounded-full object-cover"
-                        />
-                      )}
+                      <div className="h-9 w-9 rounded-full overflow-hidden bg-gray-800 flex items-center justify-center">
+                        {acct.avatar_url ? (
+                          <img
+                            src={acct.avatar_url}
+                            alt={getAccountDisplayName(acct)}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <span className="text-xs text-gray-300">
+                            {getAccountInitial(acct)}
+                          </span>
+                        )}
+                      </div>
                       <div>
                         <p className="text-[11px] uppercase tracking-wide text-gray-500">
                           {acct.platform.toUpperCase()}
                           {acct.is_primary ? " • PRIMARY" : ""}
                         </p>
                         <p className="mt-1 text-sm font-medium text-gray-50">
-                          {acct.display_name ?? acct.username ?? "(no name)"}
+                          {getAccountDisplayName(acct)}
                         </p>
                         {acct.username && (
                           <p className="text-xs text-gray-400">

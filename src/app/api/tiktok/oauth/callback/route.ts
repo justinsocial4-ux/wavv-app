@@ -1,239 +1,170 @@
 // src/app/api/tiktok/oauth/callback/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabaseServerClient";
+import { createClient } from "@supabase/supabase-js";
 
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const TIKTOK_CLIENT_KEY = process.env.TIKTOK_CLIENT_KEY!;
 const TIKTOK_CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET!;
 const TIKTOK_REDIRECT_URI = process.env.TIKTOK_REDIRECT_URI!;
 
-type TikTokTokenResponse = {
-  access_token: string;
-  refresh_token: string;
-  open_id: string;
-  scope?: string;
-  expires_in?: number;
-  refresh_expires_in?: number;
-};
+// Admin client – server only
+const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-type TikTokUserInfoResponse = {
-  data?: {
-    user?: {
-      open_id?: string;
-      username?: string;
-      display_name?: string;
-      avatar_url?: string;
-      [key: string]: any;
-    };
-  };
-  error?: {
-    code?: string | number;
-    message?: string;
-  };
-};
+function buildRedirect(req: NextRequest, path: string) {
+  const origin = req.nextUrl.origin;
+  return NextResponse.redirect(new URL(path, origin));
+}
 
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
-  const returnTo = url.searchParams.get("returnTo") ?? "/accounts";
+  const url = req.nextUrl;
+  const searchParams = url.searchParams;
 
-  if (!code) {
-    return NextResponse.json(
-      { error: "Missing OAuth code from TikTok" },
-      { status: 400 }
+  const code = searchParams.get("code");
+  const state = searchParams.get("state");
+  const error = searchParams.get("error");
+
+  // Handle user cancel / error from TikTok
+  if (error || !code) {
+    return buildRedirect(
+      req,
+      `/accounts?error=${encodeURIComponent(error || "missing_code")}`
     );
   }
 
+  // state should contain uid + returnTo
   if (!state) {
-    return NextResponse.json(
-      { error: "Missing state when returning from TikTok" },
-      { status: 400 }
-    );
+    return buildRedirect(req, "/accounts?error=missing_state");
   }
 
-  // --- 1) Decode state payload to get our user_id ---
-  let userId: string | null = null;
-  try {
-    const decoded = Buffer.from(state, "base64url").toString("utf8");
-    const parsed = JSON.parse(decoded);
-    if (parsed && typeof parsed.uid === "string") {
-      userId = parsed.uid;
-    }
-  } catch (err) {
-    console.error("[TikTok OAuth callback] Failed to decode state:", err);
-  }
+  const stateParams = new URLSearchParams(state);
+  const userId = stateParams.get("uid");
+  const returnTo = stateParams.get("returnTo") || "/accounts";
 
   if (!userId) {
-    return NextResponse.json(
-      { error: "Missing user id when returning from TikTok" },
-      { status: 400 }
-    );
+    return buildRedirect(req, "/accounts?error=missing_user_id");
   }
 
-  // --- 2) Exchange code -> access token + open_id ---
-  let tokenJson: TikTokTokenResponse;
   try {
-    const tokenRes = await fetch(
-      "https://open.tiktokapis.com/v2/oauth/token/",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          client_key: TIKTOK_CLIENT_KEY,
-          client_secret: TIKTOK_CLIENT_SECRET,
-          code,
-          grant_type: "authorization_code",
-          redirect_uri: TIKTOK_REDIRECT_URI,
-        }).toString(),
-      }
-    );
+    // 1) Exchange code for access_token / refresh_token / open_id
+    const tokenRes = await fetch("https://open-api.tiktok.com/oauth/token/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        client_key: TIKTOK_CLIENT_KEY,
+        client_secret: TIKTOK_CLIENT_SECRET,
+        code,
+        grant_type: "authorization_code",
+        redirect_uri: TIKTOK_REDIRECT_URI,
+      }),
+    });
 
     if (!tokenRes.ok) {
-      const bodyText = await tokenRes.text();
-      console.error(
-        "[TikTok OAuth callback] Token exchange failed:",
-        tokenRes.status,
-        bodyText
-      );
-      return NextResponse.json(
-        {
-          error: "Failed exchanging code for tokens with TikTok",
-          details: bodyText,
-        },
-        { status: 500 }
-      );
+      const body = await tokenRes.text().catch(() => "");
+      console.error("TikTok token exchange failed:", tokenRes.status, body);
+      return buildRedirect(req, "/accounts?error=tiktok_token_exchange_failed");
     }
 
-    tokenJson = (await tokenRes.json()) as TikTokTokenResponse;
-  } catch (err: any) {
-    console.error("[TikTok OAuth callback] Error during token exchange:", err);
-    return NextResponse.json(
-      {
-        error: "Unexpected error during TikTok token exchange",
-        details: err?.message ?? String(err),
+    const tokenJson: any = await tokenRes.json();
+    const tokenData = tokenJson.data ?? tokenJson;
+
+    const access_token: string | undefined = tokenData.access_token;
+    const refresh_token: string | undefined = tokenData.refresh_token;
+    const open_id: string | undefined = tokenData.open_id;
+
+    if (!access_token || !refresh_token || !open_id) {
+      console.error("Missing fields from TikTok token response:", tokenJson);
+      return buildRedirect(req, "/accounts?error=missing_tiktok_token_fields");
+    }
+
+    // 2) Fetch user info (display_name, username, avatar_url)
+    // NOTE: If TikTok updates this API, you may need to adjust the URL or field names,
+    // but we are using the exact endpoint you specified in your prompt.
+    const userInfoRes = await fetch("https://open-api.tiktok.com/user/info/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-      { status: 500 }
-    );
-  }
-
-  const accessToken = tokenJson.access_token;
-  const refreshToken = tokenJson.refresh_token;
-  const externalUserId = tokenJson.open_id;
-
-  if (!accessToken || !externalUserId) {
-    console.error("[TikTok OAuth callback] Missing access_token or open_id", {
-      tokenJson,
+      body: JSON.stringify({
+        open_id,
+        access_token,
+        fields: ["display_name", "username", "avatar_url"],
+      }),
     });
-    return NextResponse.json(
-      {
-        error: "TikTok token response did not include access_token/open_id",
-      },
-      { status: 500 }
-    );
-  }
-
-  // --- 3) Fetch user profile info from TikTok ---
-  let username: string | null = null;
-  let displayName: string | null = null;
-  let avatarUrl: string | null = null;
-  let profileData: any = null;
-
-  try {
-    const userInfoRes = await fetch(
-      "https://open.tiktokapis.com/v2/user/info/?fields=open_id,avatar_url,display_name,username",
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }
-    );
 
     if (!userInfoRes.ok) {
-      const text = await userInfoRes.text();
-      console.warn(
-        "[TikTok OAuth callback] user/info request failed:",
-        userInfoRes.status,
-        text
-      );
-    } else {
-      const userInfoJson =
-        (await userInfoRes.json()) as TikTokUserInfoResponse;
-      const user = userInfoJson.data?.user;
+      const body = await userInfoRes.text().catch(() => "");
+      console.error("TikTok user info fetch failed:", userInfoRes.status, body);
 
-      if (user) {
-        profileData = user;
-        username = user.username ?? null;
-        displayName = user.display_name ?? null;
-        avatarUrl = user.avatar_url ?? null;
-      } else if (userInfoJson.error) {
-        console.warn(
-          "[TikTok OAuth callback] user/info error:",
-          userInfoJson.error
+      // We still save tokens & open_id even if profile fetch fails
+      const { error: upsertError } = await supabaseAdmin
+        .from("connected_accounts")
+        .upsert(
+          {
+            user_id: userId,
+            platform: "tiktok",
+            external_user_id: open_id,
+            access_token,
+            refresh_token,
+            updated_at: new Date().toISOString(),
+          },
+          {
+            onConflict: "user_id,platform",
+          }
         );
+
+      if (upsertError) {
+        console.error("Supabase upsert failed after user-info error:", upsertError);
+        return buildRedirect(req, "/accounts?error=connected_account_upsert_failed");
       }
+
+      return buildRedirect(req, `${returnTo}?warning=tiktok_user_info_failed`);
     }
-  } catch (err: any) {
-    console.warn(
-      "[TikTok OAuth callback] Error fetching TikTok user info:",
-      err
-    );
-  }
 
-  // --- 4) Upsert into connected_accounts in Supabase ---
-  const supabase = createSupabaseServerClient();
+    const userInfoJson: any = await userInfoRes.json();
+    const userData = userInfoJson.data ?? userInfoJson;
 
-  try {
-    const { error: upsertError } = await supabase
+    const display_name: string | null =
+      userData.display_name ?? userData.nickname ?? null;
+    const username: string | null =
+      userData.username ?? userData.unique_id ?? null;
+    const avatar_url: string | null =
+      userData.avatar_url ?? userData.avatar ?? null;
+
+    // 3) Upsert into connected_accounts
+    const { error: upsertError } = await supabaseAdmin
       .from("connected_accounts")
       .upsert(
         {
           user_id: userId,
           platform: "tiktok",
-          external_user_id: externalUserId,
+          external_user_id: open_id,
+          access_token,
+          refresh_token,
           username,
-          display_name: displayName,
-          avatar_url: avatarUrl,
-          profile_data: profileData ?? {},
-          is_primary: true,
-          last_refreshed_at: new Date().toISOString(),
-          access_token: accessToken,
-          refresh_token: refreshToken,
+          display_name,
+          avatar_url,
+          updated_at: new Date().toISOString(),
         },
-        // NOTE: this assumes you have a UNIQUE INDEX on (user_id, platform)
-        // If not, either add it or remove the onConflict option.
-        { onConflict: "user_id,platform" }
+        {
+          onConflict: "user_id,platform",
+        }
       );
 
     if (upsertError) {
-      console.error(
-        "[TikTok OAuth callback] Failed saving TikTok account in Supabase:",
-        upsertError
-      );
-      return NextResponse.json(
-        {
-          error: "Failed saving TikTok account in Supabase",
-          details: upsertError.message,
-        },
-        { status: 500 }
-      );
+      console.error("Supabase upsert failed:", upsertError);
+      return buildRedirect(req, "/accounts?error=connected_account_upsert_failed");
     }
-  } catch (err: any) {
-    console.error(
-      "[TikTok OAuth callback] Unexpected error writing to Supabase:",
-      err
-    );
-    return NextResponse.json(
-      {
-        error: "Failed saving TikTok account in Supabase",
-        details: err?.message ?? String(err),
-      },
-      { status: 500 }
-    );
-  }
 
-  // --- 5) Redirect back into the app ---
-  return NextResponse.redirect(new URL(returnTo, url.origin));
+    // 4) Redirect back to Accounts (or state returnTo)
+    return buildRedirect(req, `${returnTo}?connected=tiktok`);
+  } catch (e) {
+    console.error("Unexpected error in TikTok OAuth callback:", e);
+    return buildRedirect(req, "/accounts?error=unexpected_tiktok_oauth_error");
+  }
 }
+
+// Optional: if TikTok ever calls this with POST instead of GET
+export { GET as POST };
