@@ -1,175 +1,158 @@
+// src/app/accounts/ConnectedAccountsSection.tsx
 "use client";
 
-import React from "react";
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
 
-type ConnectedAccount = {
+/**
+ * Keep this in sync with what AccountsPage passes in.
+ * Even if we don't use all of these yet, typing them avoids TS errors.
+ */
+export type ConnectedAccount = {
   id: string;
   platform: string;
   username: string | null;
   display_name: string | null;
+  external_user_id: string | null;
   avatar_url: string | null;
   is_primary: boolean | null;
   last_refreshed_at: string | null;
-  creator_profile_id: string | null;
   created_at: string;
   updated_at: string;
+  // you can add creator_profile_id etc. later if needed
 };
 
 type ConnectedAccountsSectionProps = {
   accounts: ConnectedAccount[];
   loading: boolean;
-  profileNamesById?: Record<string, string>;
+  profileNamesById: Record<string, string>;
 };
 
-function formatDate(iso: string | null | undefined) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "—";
-  return d.toLocaleString();
-}
+export function ConnectedAccountsSection(
+  _props: ConnectedAccountsSectionProps
+) {
+  const [userId, setUserId] = useState<string | null>(null);
+  const [loadingUser, setLoadingUser] = useState(true);
+  const [connecting, setConnecting] = useState(false);
 
-const PLATFORM_ORDER = ["tiktok", "instagram", "youtube"];
+  useEffect(() => {
+    let isMounted = true;
 
-const PLATFORM_META: Record<
-  string,
-  { label: string; description: string; comingSoon?: boolean }
-> = {
-  tiktok: {
-    label: "TikTok",
-    description: "Short-form performance, hooks, and trend signals live here.",
-  },
-  instagram: {
-    label: "Instagram",
-    description: "Visual storytelling and carousels. Wiring up soon.",
-    comingSoon: true,
-  },
-  youtube: {
-    label: "YouTube",
-    description: "Long-form + Shorts. Deeper watch-time patterns coming soon.",
-    comingSoon: true,
-  },
-};
+    async function loadUser() {
+      setLoadingUser(true);
+      const {
+        data: { user },
+        error,
+      } = await supabase.auth.getUser();
 
-export function ConnectedAccountsSection({
-  accounts,
-  loading,
-  profileNamesById,
-}: ConnectedAccountsSectionProps) {
-  const byPlatform: Record<string, ConnectedAccount[]> = {};
+      if (!isMounted) return;
 
-  for (const acct of accounts) {
-    const key = (acct.platform ?? "").toLowerCase();
-    if (!byPlatform[key]) byPlatform[key] = [];
-    byPlatform[key].push(acct);
-  }
+      if (error) {
+        console.error("[ConnectedAccountsSection] getUser error:", error);
+        setUserId(null);
+      } else {
+        setUserId(user?.id ?? null);
+      }
+
+      setLoadingUser(false);
+    }
+
+    loadUser();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const handleConnectTikTok = async () => {
+    if (connecting) return;
+
+    setConnecting(true);
+
+    try {
+      let uid = userId;
+
+      // If we somehow don't have a user yet, try once more
+      if (!uid) {
+        const {
+          data: { user },
+          error,
+        } = await supabase.auth.getUser();
+
+        if (error || !user) {
+          console.error(
+            "[ConnectedAccountsSection] No logged-in user to connect TikTok:",
+            error
+          );
+          window.location.href = "/login";
+          return;
+        }
+
+        uid = user.id;
+        setUserId(uid);
+      }
+
+      const url = `/api/tiktok/oauth/start?returnTo=/accounts&uid=${encodeURIComponent(
+        uid!
+      )}`;
+
+      window.location.href = url;
+    } catch (err) {
+      console.error(
+        "[ConnectedAccountsSection] Error starting TikTok OAuth:",
+        err
+      );
+      setConnecting(false);
+    }
+  };
 
   return (
-    <section className="mb-8 rounded-2xl border border-gray-800 bg-gradient-to-b from-gray-950 to-gray-900 px-5 py-4">
-      <div className="mb-4 flex flex-col justify-between gap-2 md:flex-row md:items-center">
+    <section className="mb-6 rounded-2xl border border-gray-800 bg-gradient-to-b from-gray-950 to-gray-900 px-5 py-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
         <div>
-          <p className="text-[11px] uppercase tracking-wide text-gray-400">
+          <p className="text-xs uppercase tracking-wide text-gray-400">
             Connected accounts
           </p>
-          <h2 className="mt-1 text-lg font-semibold text-gray-50">
-            Where Wavv can listen & learn
-          </h2>
-          <p className="mt-1 text-xs text-gray-400 max-w-xl">
+          <p className="mt-1 text-sm text-gray-300">
             These channels are data sources, not a to-do list. The strategy
             engine will still decide which platforms deserve focus for a given
             goal, even if everything is connected.
           </p>
         </div>
+
+        <button
+          type="button"
+          onClick={handleConnectTikTok}
+          disabled={loadingUser || connecting}
+          className="rounded-full border border-gray-700 bg-gradient-to-r from-gray-900 to-gray-800 px-4 py-2 text-xs font-medium text-gray-100 shadow-sm transition hover:border-gray-400 hover:from-gray-800 hover:to-gray-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {connecting ? "Connecting…" : "Connect TikTok"}
+        </button>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        {PLATFORM_ORDER.map((platformKey) => {
-          const platformAccounts = byPlatform[platformKey] ?? [];
-          const isConnected = platformAccounts.length > 0;
-          const meta = PLATFORM_META[platformKey];
-
-          const primary =
-            platformAccounts.find((a) => a.is_primary) ?? platformAccounts[0];
-
-          const displayName =
-            primary?.display_name ?? primary?.username ?? null;
-
-          // Which profiles is this platform linked to?
-          const linkedProfileIds = Array.from(
-            new Set(
-              platformAccounts
-                .map((a) => a.creator_profile_id)
-                .filter((id): id is string => !!id)
-            )
-          );
-
-          const linkedProfileNames =
-            profileNamesById && linkedProfileIds.length > 0
-              ? linkedProfileIds
-                  .map((id) => profileNamesById[id] ?? "Unknown profile")
-                  .join(", ")
-              : "";
-
-          return (
-            <div
-              key={platformKey}
-              className="flex flex-col justify-between rounded-2xl border border-gray-800 bg-black/40 px-4 py-4"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-[11px] uppercase tracking-wide text-gray-500">
-                    {meta?.label ?? platformKey.toUpperCase()}
-                  </p>
-                  <p className="mt-1 text-sm font-semibold text-gray-100">
-                    {isConnected
-                      ? displayName
-                        ? `Connected as ${displayName}`
-                        : "Connected"
-                      : "Not connected"}
-                  </p>
-                </div>
-
-                <span
-                  className={[
-                    "inline-flex items-center rounded-full px-2 py-1 text-[10px] font-medium",
-                    isConnected
-                      ? "border border-emerald-500/60 bg-emerald-900/30 text-emerald-100"
-                      : "border border-gray-700 bg-gray-900/60 text-gray-300",
-                  ].join(" ")}
-                >
-                  {isConnected ? "Listening" : "Idle"}
-                </span>
-              </div>
-
-              <p className="mt-2 text-xs text-gray-500">
-                {meta?.description ??
-                  "This platform will feed data into the strategy engine once connected."}
-              </p>
-
-              {isConnected && (
-                <p className="mt-3 text-[11px] text-gray-500">
-                  Last refreshed:{" "}
-                  {formatDate(primary?.last_refreshed_at ?? primary?.updated_at)}
-                  <br />
-                  Accounts linked: {platformAccounts.length}
-                </p>
-              )}
-
-              {linkedProfileNames && (
-                <p className="mt-2 text-[11px] text-gray-400">
-                  Linked to: {linkedProfileNames}
-                </p>
-              )}
-
-              {meta?.comingSoon && (
-                <p className="mt-3 text-[10px] uppercase tracking-wide text-gray-600">
-                  Coming soon
-                </p>
-              )}
-            </div>
-          );
-        })}
+      {/* Simple placeholder cards for now; we’ll wire real status later. */}
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="rounded-xl border border-gray-800 bg-black/40 px-4 py-3 text-sm text-gray-300">
+          <p className="text-[11px] uppercase tracking-wide text-gray-400">
+            TikTok
+          </p>
+          <p className="mt-1 text-xs text-gray-400">
+            Short-form performance, hooks, and trend signals we listen to.
+          </p>
+        </div>
+        <div className="rounded-xl border border-gray-800 bg-black/40 px-4 py-3 text-sm text-gray-500">
+          <p className="text-[11px] uppercase tracking-wide text-gray-500">
+            Instagram
+          </p>
+          <p className="mt-1 text-xs text-gray-500">Coming soon.</p>
+        </div>
+        <div className="rounded-xl border border-gray-800 bg-black/40 px-4 py-3 text-sm text-gray-500">
+          <p className="text-[11px] uppercase tracking-wide text-gray-500">
+            YouTube
+          </p>
+          <p className="mt-1 text-xs text-gray-500">Coming soon.</p>
+        </div>
       </div>
     </section>
   );
 }
-    
