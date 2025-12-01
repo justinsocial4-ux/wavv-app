@@ -1,0 +1,24 @@
+CURRENT THREAD
+[one-line thread label goes here]
+
+ACTIVE FILES
+- [file path 1]
+- [file path 2]
+- [etc]
+
+CHECKPOINT
+- Current goal: [what we’re ultimately trying to achieve]
+- Step just completed: [what we just finished]
+- Files touched: [comma-separated paths]
+- Routes/APIs involved: [list of routes]
+- Env vars referenced: [list or “none”]
+- Important assumptions: [bullets or short sentence]
+- Next step: [plain-English next move]
+- TikTok/Supabase/Auth status: [short status]
+
+DIRECTION LOG
+- Why previous work paused: [reason]
+- Current blocker / pivot: [if any]
+- What we are doing now: [current focus]
+- What we will resume after this: [queued work]
+- Thread label: [same as CURRENT THREAD or more specific]

@@ -10,6 +10,7 @@ type ConnectedAccount = {
   avatar_url: string | null;
   is_primary: boolean | null;
   last_refreshed_at: string | null;
+  creator_profile_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -17,6 +18,7 @@ type ConnectedAccount = {
 type ConnectedAccountsSectionProps = {
   accounts: ConnectedAccount[];
   loading: boolean;
+  profileNamesById?: Record<string, string>;
 };
 
 function formatDate(iso: string | null | undefined) {
@@ -51,11 +53,8 @@ const PLATFORM_META: Record<
 export function ConnectedAccountsSection({
   accounts,
   loading,
+  profileNamesById,
 }: ConnectedAccountsSectionProps) {
-  // ADHD-friendly constraint:
-  // - 1 clear block
-  // - obvious status pill per platform
-  // - at-a-glance understanding, no wall of text
   const byPlatform: Record<string, ConnectedAccount[]> = {};
 
   for (const acct of accounts) {
@@ -88,12 +87,27 @@ export function ConnectedAccountsSection({
           const isConnected = platformAccounts.length > 0;
           const meta = PLATFORM_META[platformKey];
 
-          // Prefer the primary account if there is one
           const primary =
             platformAccounts.find((a) => a.is_primary) ?? platformAccounts[0];
 
           const displayName =
             primary?.display_name ?? primary?.username ?? null;
+
+          // Which profiles is this platform linked to?
+          const linkedProfileIds = Array.from(
+            new Set(
+              platformAccounts
+                .map((a) => a.creator_profile_id)
+                .filter((id): id is string => !!id)
+            )
+          );
+
+          const linkedProfileNames =
+            profileNamesById && linkedProfileIds.length > 0
+              ? linkedProfileIds
+                  .map((id) => profileNamesById[id] ?? "Unknown profile")
+                  .join(", ")
+              : "";
 
           return (
             <div
@@ -140,6 +154,12 @@ export function ConnectedAccountsSection({
                 </p>
               )}
 
+              {linkedProfileNames && (
+                <p className="mt-2 text-[11px] text-gray-400">
+                  Linked to: {linkedProfileNames}
+                </p>
+              )}
+
               {meta?.comingSoon && (
                 <p className="mt-3 text-[10px] uppercase tracking-wide text-gray-600">
                   Coming soon
@@ -152,3 +172,4 @@ export function ConnectedAccountsSection({
     </section>
   );
 }
+    

@@ -1,8 +1,10 @@
 // src/app/api/tiktok/oauth/callback/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabaseServerClient";
+import { cookies } from "next/headers";
+import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 
 const TIKTOK_TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/";
+const TIKTOK_USER_INFO_URL = "https://open.tiktokapis.com/v2/user/info/";
 
 function getEnvOrThrow(name: string): string {
   const v = process.env[name];
@@ -23,38 +25,24 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Missing ?state" }, { status: 400 });
     }
 
-    // Default return path + user id from state
+    // Default return path
     let returnTo = "/accounts";
-    let userIdFromState: string | null = null;
-
     try {
       const decoded = JSON.parse(
         Buffer.from(state, "base64url").toString("utf8")
       );
-
       if (decoded?.r && typeof decoded.r === "string") {
         returnTo = decoded.r;
       }
-      if (decoded?.uid && typeof decoded.uid === "string") {
-        userIdFromState = decoded.uid;
-      }
     } catch (err) {
       console.warn("[tiktok/callback] Failed to decode state:", err);
-    }
-
-    if (!userIdFromState) {
-      console.error("[tiktok/callback] Missing user id in state");
-      return NextResponse.json(
-        { error: "Missing user id when returning from TikTok" },
-        { status: 400 }
-      );
     }
 
     const clientKey = getEnvOrThrow("TIKTOK_CLIENT_KEY");
     const clientSecret = getEnvOrThrow("TIKTOK_CLIENT_SECRET");
     const redirectUri = getEnvOrThrow("TIKTOK_REDIRECT_URI");
 
-    // TikTok expects x-www-form-urlencoded
+    // 1) Exchange code for access token
     const body = new URLSearchParams({
       client_key: clientKey,
       client_secret: clientSecret,
@@ -82,7 +70,6 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Some envs nest under `data`, some don't
     const data = tokenJson.data ?? tokenJson;
 
     const accessToken: string | undefined = data.access_token;
@@ -106,64 +93,106 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Use your existing server-side Supabase client (service role)
-    const supabase = await createSupabaseServerClient();
+    // 2) Fetch TikTok user profile (username, display name, avatar)
+    let tiktokUsername: string | null = null;
+    let tiktokDisplayName: string | null = null;
+    let tiktokAvatarUrl: string | null = null;
 
-    // -------- MANUAL UPSERT: find existing row for (user_id, 'tiktok') --------
-    const {
-      data: existingRow,
-      error: existingError,
-    } = await supabase
-      .from("connected_accounts")
-      .select("id")
-      .eq("user_id", userIdFromState)
-      .eq("platform", "tiktok")
-      .maybeSingle();
+    try {
+      const userInfoRes = await fetch(TIKTOK_USER_INFO_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          fields: ["open_id", "username", "display_name", "avatar_url"],
+        }),
+      });
 
-    if (existingError && existingError.code !== "PGRST116") {
-      // PGRST116 = no rows found for single(), but maybeSingle() should hide that.
-      console.error(
-        "[tiktok/callback] Error checking existing connected_account:",
-        existingError
+      const userInfoJson: any = await userInfoRes.json();
+      console.log("[tiktok/callback] user info response:", userInfoJson);
+
+      if (userInfoRes.ok && userInfoJson?.data) {
+        // TikTok responses can vary: data.user OR data.user_list[0]
+        const u =
+          userInfoJson.data.user ??
+          (Array.isArray(userInfoJson.data.user_list) &&
+            userInfoJson.data.user_list[0]) ??
+          null;
+
+        if (u) {
+          if (typeof u.username === "string") {
+            tiktokUsername = u.username;
+          }
+          if (typeof u.display_name === "string") {
+            tiktokDisplayName = u.display_name;
+          }
+          if (typeof u.avatar_url === "string") {
+            tiktokAvatarUrl = u.avatar_url;
+          }
+        } else {
+          console.warn(
+            "[tiktok/callback] No user object found in user info response"
+          );
+        }
+      } else {
+        console.warn(
+          "[tiktok/callback] Failed to fetch user info, proceeding without enrichment"
+        );
+      }
+    } catch (err) {
+      console.warn(
+        "[tiktok/callback] Error while fetching TikTok user info:",
+        err
       );
+    }
+
+    // 3) Get current Supabase user (cookie-based session)
+    const supabase = createRouteHandlerClient({ cookies });
+
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
+
+    if (userErr) {
+      console.error("[tiktok/callback] getUser error:", userErr);
       return NextResponse.json(
         {
-          error: "Failed checking existing TikTok account in Supabase",
-          details: existingError.message,
+          error: "Failed to fetch current user",
+          details: userErr.message ?? String(userErr),
         },
         { status: 500 }
       );
     }
 
-    const payload = {
-      user_id: userIdFromState,
-      platform: "tiktok",
-      external_user_id: openId,
-      username: null,
-      display_name: null,
-      avatar_url: null,
-      is_primary: true,
-      last_refreshed_at: new Date().toISOString(),
-    };
-
-    let upsertResult;
-
-    if (existingRow?.id) {
-      // UPDATE existing
-      upsertResult = await supabase
-        .from("connected_accounts")
-        .update(payload)
-        .eq("id", existingRow.id)
-        .select();
-    } else {
-      // INSERT new
-      upsertResult = await supabase
-        .from("connected_accounts")
-        .insert([payload])
-        .select();
+    if (!user) {
+      // Not logged in -> send them to login
+      return NextResponse.redirect(new URL("/login", url.origin));
     }
 
-    const { data: upsertRows, error: upsertError } = upsertResult;
+    // 4) Upsert into connected_accounts (global auth layer)
+    const { data: upsertRows, error: upsertError } = await supabase
+      .from("connected_accounts")
+      .upsert(
+        {
+          user_id: user.id,
+          platform: "tiktok",
+          external_user_id: openId,
+          access_token: accessToken,
+          refresh_token: refreshToken ?? null,
+          username: tiktokUsername ?? null,
+          display_name: tiktokDisplayName ?? null,
+          avatar_url: tiktokAvatarUrl ?? null,
+          is_primary: true,
+          last_refreshed_at: new Date().toISOString(),
+        },
+        {
+          onConflict: "user_id,platform",
+        }
+      )
+      .select();
 
     if (upsertError) {
       console.error("[tiktok/callback] Supabase upsert error:", upsertError);
@@ -178,7 +207,7 @@ export async function GET(req: NextRequest) {
 
     console.log("[tiktok/callback] Upserted connected_accounts:", upsertRows);
 
-    // Back to where they started
+    // 5) Back to where they started
     return NextResponse.redirect(new URL(returnTo, url.origin));
   } catch (err: any) {
     console.error("[tiktok/callback] Unexpected error:", err);

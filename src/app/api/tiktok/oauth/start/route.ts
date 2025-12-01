@@ -16,23 +16,15 @@ export async function GET(req: NextRequest) {
     const clientKey = getEnvOrThrow("TIKTOK_CLIENT_KEY");
     const redirectUri = getEnvOrThrow("TIKTOK_REDIRECT_URI");
 
+    // Optional return path, defaults to /accounts
     const url = new URL(req.url);
-
-    // Where to send them back inside Wavv
     const returnTo = url.searchParams.get("returnTo") ?? "/accounts";
 
-    // Supabase user id (we’ll pass this from the Accounts page)
-    const uid = url.searchParams.get("uid") ?? null;
-
-    // Pack minimal state so callback knows who & where to return
-    const statePayload: Record<string, any> = {
+    // Pack minimal state so callback knows where to go back to
+    const statePayload = {
       r: returnTo,
       ts: Date.now(),
     };
-
-    if (uid) {
-      statePayload.uid = uid;
-    }
 
     const state = Buffer.from(
       JSON.stringify(statePayload),
@@ -44,11 +36,8 @@ export async function GET(req: NextRequest) {
     authUrl.searchParams.set("redirect_uri", redirectUri);
     authUrl.searchParams.set("response_type", "code");
 
-    // Keep scopes tight – Login Kit basics
-    authUrl.searchParams.set(
-      "scope",
-      "user.info.basic,user.info.profile,user.info.stats"
-    );
+    // IMPORTANT: Login Kit scope — this is what makes TikTok return open_id
+    authUrl.searchParams.set("scope", "user.info.basic");
 
     authUrl.searchParams.set("state", state);
 
@@ -65,4 +54,3 @@ export async function GET(req: NextRequest) {
     );
   }
 }
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  

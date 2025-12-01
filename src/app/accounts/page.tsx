@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState, FormEvent } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { AuthGate } from "@/components/AuthGate";
 import { ConnectedAccountsSection } from "./ConnectedAccountsSection";
+import { ProfileList } from "@/app/accounts/ProfileList";
 
 type ConnectedAccount = {
   id: string;
@@ -15,6 +16,7 @@ type ConnectedAccount = {
   avatar_url: string | null;
   is_primary: boolean | null;
   last_refreshed_at: string | null;
+  creator_profile_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -44,6 +46,13 @@ function slugify(value: string): string {
     .replace(/[^a-z0-9_.-]/g, "");
 }
 
+function formatDate(iso: string | null | undefined) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleString();
+}
+
 export default function AccountsPage() {
   const [profiles, setProfiles] = useState<CreatorProfile[]>([]);
   const [connectedAccounts, setConnectedAccounts] = useState<ConnectedAccount[]>(
@@ -58,7 +67,7 @@ export default function AccountsPage() {
   const [newBio, setNewBio] = useState("");
   const [creating, setCreating] = useState(false);
 
-  // ---------- LOAD PROFILES & CONNECTED ACCOUNTS FOR LOGGED-IN USER ----------
+  // ---------- LOAD PROFILES & CONNECTED ACCOUNTS ----------
   async function loadProfilesAndAccounts() {
     setLoading(true);
     setStatus({ type: "idle" });
@@ -98,6 +107,7 @@ export default function AccountsPage() {
           avatar_url,
           is_primary,
           last_refreshed_at,
+          creator_profile_id,
           created_at,
           updated_at
         )
@@ -136,6 +146,7 @@ export default function AccountsPage() {
         avatar_url,
         is_primary,
         last_refreshed_at,
+        creator_profile_id,
         created_at,
         updated_at
       `
@@ -145,7 +156,7 @@ export default function AccountsPage() {
 
     if (accountsError) {
       console.error("Error loading connected_accounts:", accountsError);
-      // Do not surface a UI error yet; profiles still loaded.
+      // We still show profiles even if this fails
     }
 
     setConnectedAccounts((accountsData ?? []) as ConnectedAccount[]);
@@ -192,10 +203,6 @@ export default function AccountsPage() {
       return;
     }
 
-    // Decide final handle:
-    // 1) If user typed one, slugify it
-    // 2) Else derive from display name
-    // 3) Fallback to "creator" if everything fails
     const base = rawHandle || slugify(display) || "creator";
     const finalHandle = slugify(base);
 
@@ -203,8 +210,8 @@ export default function AccountsPage() {
       {
         user_id: user.id,
         display_name: display,
-        handle: finalHandle, // 🔥 required NOT NULL column
-        slug: finalHandle, // keep slug in sync for now
+        handle: finalHandle,
+        slug: finalHandle,
         bio: bio || null,
       },
     ]);
@@ -237,6 +244,43 @@ export default function AccountsPage() {
     setNewHandle("");
     setNewBio("");
     setStatus({ type: "idle" });
+  }
+
+  // ---------- ATTACH ACCOUNT TO PROFILE ----------
+  async function handleAttachAccount(profileId: string, accountId: string) {
+    if (!accountId) return;
+
+    setStatus({ type: "loading" });
+
+    try {
+      const { error } = await supabase
+        .from("connected_accounts")
+        .update({ creator_profile_id: profileId })
+        .eq("id", accountId);
+
+      if (error) {
+        console.error("Error attaching account to profile:", error);
+        setStatus({
+          type: "error",
+          message: "Could not attach account to this profile.",
+        });
+        return;
+      }
+
+      setStatus({
+        type: "success",
+        message: "Account linked to profile.",
+      });
+
+      await loadProfilesAndAccounts();
+    } catch (err: any) {
+      console.error("Unexpected error attaching account:", err);
+      setStatus({
+        type: "error",
+        message:
+          err?.message ?? "Something went wrong while linking the account.",
+      });
+    }
   }
 
   // ---------- REFRESH TIKTOK INGEST ----------
@@ -284,14 +328,7 @@ export default function AccountsPage() {
     }
   }
 
-  // ---------- HELPERS ----------
-  function formatDate(iso: string | null | undefined) {
-    if (!iso) return "—";
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return iso;
-    return d.toLocaleString();
-  }
-
+  // ---------- DERIVED VALUES ----------
   const summary = useMemo(() => {
     const profileCount = profiles.length;
 
@@ -315,6 +352,18 @@ export default function AccountsPage() {
 
   const hasProfiles = profiles.length > 0;
 
+  const profileNamesById = useMemo(
+    () =>
+      Object.fromEntries(
+        profiles.map((p) => [p.id, p.display_name] as [string, string])
+      ),
+    [profiles]
+  );
+
+  const unlinkedAccounts = connectedAccounts.filter(
+    (acct) => !acct.creator_profile_id
+  );
+
   // ---------- RENDER ----------
   return (
     <AuthGate>
@@ -334,7 +383,7 @@ export default function AccountsPage() {
               </p>
             </div>
 
-            {/* Quick TikTok connect CTA (existing behavior) */}
+            {/* Quick TikTok connect CTA */}
             <div className="rounded-2xl border border-gray-800 bg-gray-900/70 px-4 py-3 text-sm">
               <p className="text-[11px] uppercase tracking-wide text-gray-400">
                 Connect TikTok
@@ -368,10 +417,11 @@ export default function AccountsPage() {
             </div>
           )}
 
-          {/* Global connected accounts (new Section) */}
+          {/* Global connected accounts */}
           <ConnectedAccountsSection
             accounts={connectedAccounts}
             loading={loading}
+            profileNamesById={profileNamesById}
           />
 
           {/* New creator profile form */}
@@ -503,139 +553,16 @@ export default function AccountsPage() {
             </div>
           </section>
 
-          {/* Profiles & accounts list */}
-          <section>
-            {loading && (
-              <div className="rounded-2xl border border-gray-800 bg-gray-900/40 px-5 py-6 text-sm text-gray-400">
-                Loading your profiles…
-              </div>
-            )}
-
-            {!loading && !hasProfiles && (
-              <div className="rounded-2xl border border-gray-800 bg-gray-900/40 px-5 py-6 text-sm text-gray-400">
-                You don’t have any creator profiles yet. Use the “Create creator
-                profile” form above to set up your first one. Once you connect
-                accounts, Wavv will attach your channels so the strategy engine
-                can make multi-platform decisions.
-              </div>
-            )}
-
-            {!loading && hasProfiles && (
-              <div className="space-y-6">
-                {profiles.map((profile) => {
-                  const accounts = profile.connected_accounts ?? [];
-                  return (
-                    <div
-                      key={profile.id}
-                      className="rounded-2xl border border-gray-800 bg-gray-900/60 px-5 py-4"
-                    >
-                      {/* Profile header */}
-                      <div className="flex flex-col gap-2 border-b border-gray-800 pb-3 md:flex-row md:items-center md:justify-between">
-                        <div>
-                          <p className="text-xs uppercase tracking-wide text-gray-500">
-                            Creator profile
-                          </p>
-                          <p className="mt-1 text-lg font-semibold text-gray-50">
-                            {profile.display_name}
-                          </p>
-                          {profile.slug && (
-                            <p className="text-xs text-gray-400">
-                              @{profile.slug}
-                            </p>
-                          )}
-                          {profile.bio && (
-                            <p className="mt-2 text-xs text-gray-400 line-clamp-2">
-                              {profile.bio}
-                            </p>
-                          )}
-                        </div>
-                        <p className="text-[11px] text-gray-500">
-                          Created: {formatDate(profile.created_at)}
-                          <br />
-                          Updated: {formatDate(profile.updated_at)}
-                        </p>
-                      </div>
-
-                      {/* Accounts for this profile */}
-                      <div className="mt-3 space-y-3">
-                        {accounts.length === 0 && (
-                          <p className="text-xs text-gray-500">
-                            No accounts linked to this profile yet.
-                          </p>
-                        )}
-
-                        {accounts.map((acct) => (
-                          <div
-                            key={acct.id}
-                            className="flex flex-col justify-between gap-3 rounded-xl border border-gray-800 bg-black/40 px-4 py-3 md:flex-row md:items-center"
-                          >
-                            <div className="flex items-center gap-3">
-                              {acct.avatar_url && (
-                                <img
-                                  src={acct.avatar_url}
-                                  alt={acct.display_name ?? acct.username ?? ""}
-                                  className="h-9 w-9 rounded-full object-cover"
-                                />
-                              )}
-                              <div>
-                                <p className="text-[11px] uppercase tracking-wide text-gray-500">
-                                  {acct.platform.toUpperCase()}
-                                  {acct.is_primary ? " • PRIMARY" : ""}
-                                </p>
-                                <p className="mt-1 text-sm font-medium text-gray-50">
-                                  {acct.display_name ??
-                                    acct.username ??
-                                    "(no name)"}
-                                </p>
-                                {acct.username && (
-                                  <p className="text-xs text-gray-400">
-                                    @{acct.username}
-                                  </p>
-                                )}
-                                <p className="mt-1 text-[11px] text-gray-500">
-                                  Linked: {formatDate(acct.created_at)}
-                                  {" • "}
-                                  Updated: {formatDate(acct.updated_at)}
-                                  {acct.last_refreshed_at && (
-                                    <>
-                                      {" • "}
-                                      Last ingest:{" "}
-                                      {formatDate(acct.last_refreshed_at)}
-                                    </>
-                                  )}
-                                </p>
-                              </div>
-                            </div>
-
-                            {/* Actions */}
-                            <div className="flex flex-row flex-wrap gap-2 md:flex-col md:items-end">
-                              {acct.platform === "tiktok" && acct.username && (
-                                <button
-                                  onClick={() => handleRefreshIngest(acct)}
-                                  disabled={status.type === "loading"}
-                                  className="rounded-full border border-gray-700 bg-gradient-to-r from-gray-900 to-gray-800 px-4 py-2 text-xs font-medium text-gray-100 shadow-sm transition hover:border-gray-400 hover:from-gray-800 hover:to-gray-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                  {status.type === "loading"
-                                    ? "Refreshing…"
-                                    : "Refresh TikTok data"}
-                                </button>
-                              )}
-                              {acct.platform !== "tiktok" && (
-                                <p className="text-[11px] text-gray-500">
-                                  Ingest for {acct.platform} will be wired up
-                                  soon.
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
+          {/* Profiles & accounts list (factored out) */}
+          <ProfileList
+            loading={loading}
+            profiles={profiles}
+            hasProfiles={hasProfiles}
+            unlinkedAccounts={unlinkedAccounts}
+            statusType={status.type}
+            onAttachAccount={handleAttachAccount}
+            onRefreshIngest={handleRefreshIngest}
+          />
         </div>
       </main>
     </AuthGate>

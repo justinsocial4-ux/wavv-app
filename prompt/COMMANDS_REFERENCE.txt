@@ -1,0 +1,147 @@
+WAVV — PROMPT COMMANDS REFERENCE
+
+These are control phrases you can use while working with Wavv Founder Mode.
+
+========================================
+MODE & VERBOSITY
+========================================
+
+"Mode 1" or "Return to Strategic Default Mode."
+- Puts the model into architecture-first mode.
+- You get: system-level reasoning first, then code.
+- Use this when work is complex, risky, or cross-cutting.
+
+"Mode 3" or "Switch to Hybrid Mode."
+- Puts the model into concise, code-first mode.
+- You get: shorter reasoning, faster iterations, still safe.
+- Use this when we’re in a tight implementation loop.
+
+========================================
+CHECKPOINT / FILE COMPLETION
+========================================
+
+"Step Completed."
+- Forces a CHECKPOINT BUNDLE.
+- The model must summarize:
+  - current goal
+  - step finished
+  - files touched
+  - routes/APIs
+  - env vars
+  - assumptions
+  - next step
+  - TikTok/Supabase/Auth status
+- Use this after finishing a meaningful build step.
+
+"File Done For Now."
+- Signals that work on the current file is complete for this step.
+- Triggers a file-focused checkpoint and ACTIVE FILES update.
+- Use this after you paste a file back in and we agree it’s good.
+
+========================================
+BOOT PROMPT & DRIFT MANAGEMENT
+========================================
+
+"Update the Boot Prompt."
+- Use when you agree that a new rule or behavior should become permanent.
+- The model must:
+  - regenerate the full Boot Prompt with changes merged,
+  - update version number,
+  - also emit an updated runtime snapshot in the same answer.
+
+"Auto-Approve Prompt Updates Until I Say Stop."
+- Turns on auto-approval for Boot Prompt updates.
+- When a protocol/architecture/permanent rule is added:
+  - the model updates the Boot Prompt immediately without asking.
+- Use this only when you want maximum momentum and trust the changes.
+
+"Stop auto-approving."
+- Turns OFF auto-approval.
+- After this, the model must ask for confirmation before modifying the Boot Prompt again.
+
+========================================
+RUNTIME SNAPSHOT CONTROL
+========================================
+
+"Give me the current Runtime Snapshot."
+- The model must output:
+  - CURRENT THREAD
+  - ACTIVE FILES
+  - CHECKPOINT
+  - DIRECTION LOG
+- Use this to copy into prompt/RUNTIME_SNAPSHOT.txt after a checkpoint.
+
+"Rebuild state from this snapshot."
+- Use when you paste a snapshot at the start of a new chat.
+- Tells the model explicitly: use this snapshot as ground truth for where we left off.
+
+========================================
+CODE / ARCHITECTURE BEHAVIOR
+========================================
+
+"Full file only."
+- Reminds the model to output entire files, not diffs.
+- Use when you want copy-paste simplicity.
+
+"Diff is okay here."
+- Grants permission (for this instance) to give a minimal change / patch instead of whole file.
+- Use when the file is huge and you’re comfortable editing manually.
+
+"Keep this file under control."
+- Softly reinforces the file-size governance rule for the currently discussed file.
+- The model should:
+  - avoid bloating the file,
+  - propose splitting into subcomponents/helpers if it’s getting large.
+
+========================================
+RECOVERY / RESET FLOWS
+========================================
+
+"New chat, same project."
+- Use at the top of a brand new chat.
+- Flow:
+  - Paste Boot Prompt.
+  - Paste RUNTIME_SNAPSHOT.txt.
+  - Then say "New chat, same project." with a short instruction.
+- Signals that we’re resuming work, not starting fresh.
+
+"State Refresh Ritual."
+- Ask the model to re-summarize:
+  - current architecture assumptions,
+  - active thread,
+  - key tables and flows involved in the current work.
+- Use this if things feel fuzzy or drifted but you’re still in the same chat.
+
+========================================
+TESTING & ENVIRONMENT
+========================================
+
+"Give me the test plan for this change."
+- The model must:
+  - list URLs to visit,
+  - actions to take,
+  - expected outcomes,
+  - key failure points to watch for.
+
+"Clarify where each command runs."
+- The model must explicitly label commands by location:
+  - local terminal,
+  - Supabase SQL editor,
+  - Vercel dashboard,
+  - TikTok Developer Portal, etc.
+
+========================================
+GENERAL SAFETY
+========================================
+
+If you ever feel lost, you can say:
+
+"Pause and reorient."
+- The model must:
+  - restate the current thread,
+  - summarize what we’re doing and why,
+  - list the next 1–3 actions only.
+
+This file is just a reference. Updating it is optional, but you can expand it as new control phrases emerge.
+
+After posting the prompt and Reconstruction Spanshot, post Activate Wavv Founder Mode V5.1 using the Reconstruction Snapshot.

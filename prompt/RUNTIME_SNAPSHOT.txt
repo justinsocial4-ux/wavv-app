@@ -1,0 +1,47 @@
+# RUNTIME SNAPSHOT — WAVV
+# This file should always contain the latest checkpoint bundle.
+# Update it manually whenever we hit a meaningful checkpoint.
+
+CURRENT THREAD
+
+TikTok OAuth → Supabase connected_accounts write → Global Connected Accounts UI for /accounts
+
+ACTIVE FILES
+
+src/app/api/tiktok/oauth/start/route.ts
+
+src/app/api/tiktok/oauth/callback/route.ts
+
+src/app/accounts/page.tsx
+
+(schema reference only, not editing) public.connected_accounts in Supabase
+
+CHECKPOINT
+
+Current high-level goal: Get TikTok OAuth Login Kit flow working end-to-end and persisting a connected account with real user data.
+
+Step just completed: Cleaned up start/route.ts to use a valid Login Kit scope (user.info.basic) and removed syntax errors from extra bracket/duplicate state line.
+
+Files touched: src/app/api/tiktok/oauth/start/route.ts
+
+APIs/routes involved: GET /api/tiktok/oauth/start → TikTok https://www.tiktok.com/v2/auth/authorize/
+
+Env vars referenced: TIKTOK_CLIENT_KEY, TIKTOK_REDIRECT_URI
+
+Assumptions made: Supabase auth cookie is present when clicking Connect TikTok; TikTok app is configured for Login Kit with user.info.basic scope enabled.
+
+TikTok/Supabase/Auth state summary: Token exchange + callback are wired; previous issue was TikTok not returning open_id due to invalid scope string and local syntax error preventing build.
+
+Direction Log:
+
+Previous step paused due to TS compile error in start/route.ts.
+
+Blocker: stray ]; and duplicated state line after modifying scope.
+
+Now doing: fix start route syntax + align scope with Login Kit.
+
+Will resume next: verify OAuth flow from /accounts, then confirm connected_accounts row has open_id, username, and display_name.
+
+CURRENT THREAD: TikTok OAuth → Start Route Scopes → Callback User Mapping → Accounts UI
+
+Try the flow again after this paste + save, and tell me exactly what screen you see after clicking Connect TikTok.

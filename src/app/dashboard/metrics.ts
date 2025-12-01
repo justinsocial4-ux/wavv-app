@@ -312,6 +312,74 @@ function formatShortDate(dateStr: string | Date): string {
   });
 }
 
+// ---- Cadence helpers (new) ----
+
+export type CadencePost = {
+  created_at?: string | null;
+  p_created_at?: string | null;
+};
+
+/**
+ * Compute effective active days in the selected range.
+ * - If a fixed range (7 / 30 / 90 / custom), use that.
+ * - Else derive from the first/last daily points.
+ * - If only one day, treat as a 7-day window.
+ */
+export function computeEffectiveActiveDays(
+  rangeDays: number | null,
+  dailyPoints: DailyPoint[]
+): number {
+  if (rangeDays && rangeDays > 0) {
+    return rangeDays;
+  }
+
+  if (dailyPoints.length > 1) {
+    const first = new Date(dailyPoints[0].date);
+    const last = new Date(dailyPoints[dailyPoints.length - 1].date);
+    const diffMs = last.getTime() - first.getTime();
+    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+    return Math.max(diffDays + 1, 1);
+  }
+
+  if (dailyPoints.length === 1) {
+    // A single active day — treat as a week so cadence isn’t insane.
+    return 7;
+  }
+
+  return 0;
+}
+
+/**
+ * All-time baseline cadence: videos per week across entire history.
+ * Used to compare "this range" vs "normal pace".
+ */
+export function computeBaselineVideosPerWeek(
+  posts: CadencePost[]
+): number {
+  if (posts.length <= 1) return 0;
+
+  const dateStrings = posts
+    .map((p) => p.created_at ?? p.p_created_at)
+    .filter((d): d is string => !!d);
+
+  if (dateStrings.length <= 1) return 0;
+
+  const dates = dateStrings
+    .map((d) => new Date(d))
+    .filter((d) => !isNaN(d.getTime()));
+
+  if (dates.length <= 1) return 0;
+
+  const minTime = Math.min(...dates.map((d) => d.getTime()));
+  const maxTime = Math.max(...dates.map((d) => d.getTime()));
+  const daysSpan = (maxTime - minTime) / (1000 * 60 * 60 * 24) + 1;
+  const weeksSpan = daysSpan / 7;
+
+  if (weeksSpan <= 0) return 0;
+
+  return posts.length / weeksSpan;
+}
+
 // ---- Main metrics computer ----
 
 export function computeDashboardMetrics(
@@ -371,21 +439,10 @@ export function computeDashboardMetrics(
 
   // ----- Effective active days for cadence -----
   const rangeDays = getDaysForRange(timeRange, customDays);
-  let effectiveActiveDays = 0;
-
-  if (rangeDays && rangeDays > 0) {
-    effectiveActiveDays = rangeDays;
-  } else if (dailyPoints.length > 1) {
-    const first = new Date(dailyPoints[0].date);
-    const last = new Date(dailyPoints[dailyPoints.length - 1].date);
-    const diffMs = last.getTime() - first.getTime();
-    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
-    effectiveActiveDays = Math.max(diffDays + 1, 1);
-  } else if (dailyPoints.length === 1) {
-    effectiveActiveDays = 7;
-  } else {
-    effectiveActiveDays = 0;
-  }
+  const effectiveActiveDays = computeEffectiveActiveDays(
+    rangeDays,
+    dailyPoints
+  );
 
   const videosPerWeek =
     effectiveActiveDays > 0
@@ -393,27 +450,9 @@ export function computeDashboardMetrics(
       : 0;
 
   // ----- Historical baseline cadence -----
-  let baselineVideosPerWeek = 0;
-  if (allPosts.length > 1) {
-    const dateStrings = allPosts
-      .map((p) => p.created_at ?? p.p_created_at)
-      .filter((d): d is string => !!d);
-
-    if (dateStrings.length > 1) {
-      const dates = dateStrings
-        .map((d) => new Date(d))
-        .filter((d) => !isNaN(d.getTime()));
-      if (dates.length > 1) {
-        const minDate = new Date(Math.min(...dates.map((d) => d.getTime())));
-        const maxDate = new Date(Math.max(...dates.map((d) => d.getTime())));
-        const msDiff = maxDate.getTime() - minDate.getTime();
-        const daysSpan = msDiff / (1000 * 60 * 60 * 24) + 1;
-        const weeksSpan = daysSpan / 7;
-        baselineVideosPerWeek =
-          weeksSpan > 0 ? allPosts.length / weeksSpan : 0;
-      }
-    }
-  }
+  const baselineVideosPerWeek = computeBaselineVideosPerWeek(
+    allPosts
+  );
 
   // ----- Cadence narrative -----
   let cadenceSentence = "";
