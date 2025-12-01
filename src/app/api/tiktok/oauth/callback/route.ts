@@ -91,14 +91,14 @@ export async function GET(req: NextRequest) {
   try {
     //
     // 1) Exchange code for access_token / refresh_token / open_id
-    //    Using TikTok Open API v2 endpoint and JSON body
+    //    TikTok v2 endpoint with x-www-form-urlencoded body
     //
     const tokenRes = await fetch("https://open.tiktokapis.com/v2/oauth/token/", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: JSON.stringify({
+      body: new URLSearchParams({
         client_key: TIKTOK_CLIENT_KEY,
         client_secret: TIKTOK_CLIENT_SECRET,
         code,
@@ -129,7 +129,6 @@ export async function GET(req: NextRequest) {
 
     //
     // 2) Fetch user info (display_name, username, avatar_url)
-    //    Using the endpoint you specified: open-api.tiktok.com/user/info/
     //
     let display_name: string | null = null;
     let username: string | null = null;
