@@ -30,13 +30,14 @@ function decodeState(rawState: string | null): {
   // Try raw querystring first
   try {
     const sp = new URLSearchParams(rawState);
-    const uidParam =
-      sp.get("uid") || sp.get("user_id") || sp.get("u");
+    const uidParam = sp.get("uid") || sp.get("user_id") || sp.get("u");
     if (uidParam) userId = uidParam;
 
     const rtParam = sp.get("returnTo") || sp.get("r");
     if (rtParam) returnTo = rtParam;
-  } catch {}
+  } catch {
+    // ignore
+  }
 
   // Fallback: base64 JSON (what TikTok Login Kit actually sends)
   if (!userId) {
@@ -49,7 +50,9 @@ function decodeState(rawState: string | null): {
       if (json.returnTo || json.r) {
         returnTo = json.returnTo || json.r;
       }
-    } catch {}
+    } catch {
+      // ignore
+    }
   }
 
   return { userId, returnTo };
@@ -77,7 +80,7 @@ export async function GET(req: NextRequest) {
 
   try {
     //
-    // 1) TikTok Token Exchange — MUST BE exact URL encoding
+    // 1) TikTok Token Exchange — v2 endpoint, exact x-www-form-urlencoded
     //
     const tokenBody =
       "client_key=" +
@@ -93,7 +96,8 @@ export async function GET(req: NextRequest) {
     const tokenRes = await fetch("https://open.tiktokapis.com/v2/oauth/token/", {
       method: "POST",
       headers: {
-        "content-type": "application/x-www-form-urlencoded"
+        // TikTok is picky: only this exact value is accepted
+        "content-type": "application/x-www-form-urlencoded",
       },
       body: tokenBody,
     });
@@ -119,25 +123,34 @@ export async function GET(req: NextRequest) {
     }
 
     //
-    // 2) Fetch TikTok User Info
+    // 2) Fetch TikTok User Info — v2 Display API
+    //    GET https://open.tiktokapis.com/v2/user/info/?fields=...
     //
     let display_name: string | null = null;
     let username: string | null = null;
     let avatar_url: string | null = null;
 
     try {
+      const fields = [
+        "open_id",
+        "display_name",
+        "username",
+        "avatar_url",
+        "avatar_url_100",
+        "avatar_large_url",
+        "bio_description",
+        "profile_deep_link",
+      ].join(",");
+
       const userInfoRes = await fetch(
-        "https://open-api.tiktok.com/user/info/",
+        `https://open.tiktokapis.com/v2/user/info/?fields=${encodeURIComponent(
+          fields
+        )}`,
         {
-          method: "POST",
+          method: "GET",
           headers: {
-            "Content-Type": "application/json",
+            Authorization: `Bearer ${access_token}`,
           },
-          body: JSON.stringify({
-            open_id,
-            access_token,
-            fields: ["display_name", "username", "avatar_url"],
-          }),
         }
       );
 
@@ -149,24 +162,29 @@ export async function GET(req: NextRequest) {
           body
         );
       } else {
-        const userInfoJson = await userInfoRes.json();
-        console.log("TIKTOK USER INFO RAW:", JSON.stringify(userInfoJson, null, 2));
+        const userInfoJson: any = await userInfoRes.json();
+        console.log(
+          "TIKTOK USER INFO RAW:",
+          JSON.stringify(userInfoJson, null, 2)
+        );
 
-        const root = userInfoJson.data ?? userInfoJson;
+        const dataRoot = userInfoJson.data ?? {};
+        // per docs: { data: { user: { ... } } }
+        const userNode: any = dataRoot.user ?? dataRoot;
 
-        let u: any = root;
-        if (root.user) u = root.user;
-        if (root.user_info) u = root.user_info;
-        if (Array.isArray(root.user_list) && root.user_list[0]) {
-          u = root.user_list[0];
-        }
-
-        display_name = u.display_name ?? u.nickname ?? null;
-        username = u.username ?? u.unique_id ?? null;
-        avatar_url = u.avatar_url ?? u.avatar ?? u.avatar_medium ?? null;
+        display_name = userNode.display_name ?? null;
+        username = userNode.username ?? null;
+        avatar_url =
+          userNode.avatar_url ??
+          userNode.avatar_large_url ??
+          userNode.avatar_url_100 ??
+          null;
       }
-    } catch (err) {
-      console.error("Unexpected TikTok user info error:", err);
+    } catch (userInfoError) {
+      console.error(
+        "Unexpected TikTok user info error:",
+        userInfoError
+      );
     }
 
     //
@@ -193,7 +211,10 @@ export async function GET(req: NextRequest) {
 
     if (upsertError) {
       console.error("Supabase upsert failed:", upsertError);
-      return buildRedirect(req, "/accounts?error=connected_account_upsert_failed");
+      return buildRedirect(
+        req,
+        "/accounts?error=connected_account_upsert_failed"
+      );
     }
 
     //
@@ -206,4 +227,5 @@ export async function GET(req: NextRequest) {
   }
 }
 
+// Fallback if TikTok ever calls POST
 export { GET as POST };
