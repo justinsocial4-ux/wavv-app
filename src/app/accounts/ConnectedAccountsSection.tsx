@@ -86,6 +86,20 @@ export function ConnectedAccountsSection({
   const tiktokLinkedProfiles: string[] =
     tiktokAccount?.profile_ids?.map((id) => profileNamesById[id] || id) ?? [];
 
+  const lastRefreshedText =
+    tiktokAccount?.last_refreshed_at &&
+    !Number.isNaN(new Date(tiktokAccount.last_refreshed_at).getTime())
+      ? new Date(tiktokAccount.last_refreshed_at).toLocaleString()
+      : "unknown";
+
+  // Fallback name text for the TikTok identity row
+  const tikTokDisplayName =
+    tiktokAccount?.display_name ??
+    tiktokAccount?.username ??
+    (tiktokAccount?.external_user_id
+      ? `ID · ${tiktokAccount.external_user_id.slice(0, 8)}…`
+      : "(no name)");
+
   return (
     <section className="mb-8 rounded-2xl border border-gray-800 bg-gradient-to-b from-gray-950 to-gray-900 px-5 py-4">
       <div className="mb-2 flex items-center justify-between gap-3">
@@ -137,16 +151,34 @@ export function ConnectedAccountsSection({
               {hasTikTok ? "Listening" : "Not connected"}
             </span>
           </div>
-          <p className="text-[11px] text-gray-500">
+
+          {/* Identity row: avatar + name/username */}
+          {hasTikTok && (
+            <div className="mt-3 flex items-center gap-3">
+              {tiktokAccount?.avatar_url && (
+                <img
+                  src={tiktokAccount.avatar_url}
+                  alt={tikTokDisplayName}
+                  className="h-8 w-8 rounded-full object-cover"
+                />
+              )}
+              <div className="text-[11px] text-gray-200">
+                <p className="font-medium text-gray-100">{tikTokDisplayName}</p>
+                {tiktokAccount?.username && (
+                  <p className="text-gray-400">@{tiktokAccount.username}</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          <p className="mt-3 text-[11px] text-gray-500">
             {loading
               ? "Checking TikTok connection…"
               : hasTikTok
-              ? "Last refreshed: " +
-                (tiktokAccount?.last_refreshed_at
-                  ? new Date(tiktokAccount.last_refreshed_at).toLocaleString()
-                  : "unknown")
+              ? `Last refreshed: ${lastRefreshedText}`
               : "Connect to start ingesting TikTok posts and analytics."}
           </p>
+
           {hasTikTok && (
             <p className="mt-1 text-[11px] text-gray-500">
               Linked to:{" "}
