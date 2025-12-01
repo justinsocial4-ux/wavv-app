@@ -42,7 +42,6 @@ export function ConnectedAccountsSection({
     setErrorMessage(null);
 
     try {
-      // 1) Get the current Supabase user on the client
       const {
         data: { user },
         error,
@@ -56,20 +55,16 @@ export function ConnectedAccountsSection({
       }
 
       if (!user) {
-        // Not logged in → send to login
         window.location.href = "/login";
         return;
       }
 
-      // 2) Build the URL to our OAuth start route
       const params = new URLSearchParams({
         returnTo: "/accounts",
         uid: user.id,
       });
 
       const startUrl = `/api/tiktok/oauth/start?${params.toString()}`;
-
-      // 3) Kick off the OAuth flow
       window.location.href = startUrl;
     } catch (err: any) {
       console.error("[ConnectTikTok] Unexpected error:", err);
@@ -86,19 +81,23 @@ export function ConnectedAccountsSection({
   const tiktokLinkedProfiles: string[] =
     tiktokAccount?.profile_ids?.map((id) => profileNamesById[id] || id) ?? [];
 
-  const lastRefreshedText =
-    tiktokAccount?.last_refreshed_at &&
-    !Number.isNaN(new Date(tiktokAccount.last_refreshed_at).getTime())
-      ? new Date(tiktokAccount.last_refreshed_at).toLocaleString()
-      : "unknown";
-
-  // Fallback name text for the TikTok identity row
-  const tikTokDisplayName =
+  // Nice display helpers
+  const tiktokName =
     tiktokAccount?.display_name ??
     tiktokAccount?.username ??
     (tiktokAccount?.external_user_id
-      ? `ID · ${tiktokAccount.external_user_id.slice(0, 8)}…`
-      : "(no name)");
+      ? `ID: ${tiktokAccount.external_user_id.slice(0, 8)}…`
+      : null);
+
+  const tiktokHandle =
+    tiktokAccount?.username != null && tiktokAccount.username !== ""
+      ? `@${tiktokAccount.username}`
+      : null;
+
+  const lastRefreshedLabel =
+    tiktokAccount?.last_refreshed_at != null
+      ? new Date(tiktokAccount.last_refreshed_at).toLocaleString()
+      : "unknown";
 
   return (
     <section className="mb-8 rounded-2xl border border-gray-800 bg-gradient-to-b from-gray-950 to-gray-900 px-5 py-4">
@@ -133,13 +132,36 @@ export function ConnectedAccountsSection({
         {/* TikTok card */}
         <div className="rounded-xl border border-gray-800 bg-black/40 px-4 py-3">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <div>
-              <p className="text-[11px] uppercase tracking-wide text-gray-400">
-                TikTok
-              </p>
-              <p className="mt-0.5 text-xs text-gray-500">
-                Short-form performance, hooks, and trend signals we’ll tap.
-              </p>
+            <div className="flex items-center gap-3">
+              {hasTikTok && tiktokAccount?.avatar_url && (
+                <img
+                  src={tiktokAccount.avatar_url}
+                  alt={tiktokName ?? "TikTok account"}
+                  className="h-9 w-9 rounded-full object-cover"
+                />
+              )}
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-gray-400">
+                  TikTok
+                </p>
+                {hasTikTok && (
+                  <>
+                    {tiktokName && (
+                      <p className="text-sm font-medium text-gray-50">
+                        {tiktokName}
+                      </p>
+                    )}
+                    {tiktokHandle && (
+                      <p className="text-xs text-gray-400">{tiktokHandle}</p>
+                    )}
+                  </>
+                )}
+                {!hasTikTok && (
+                  <p className="mt-0.5 text-xs text-gray-500">
+                    Short-form performance, hooks, and trend signals we’ll tap.
+                  </p>
+                )}
+              </div>
             </div>
             <span
               className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
@@ -152,30 +174,11 @@ export function ConnectedAccountsSection({
             </span>
           </div>
 
-          {/* Identity row: avatar + name/username */}
-          {hasTikTok && (
-            <div className="mt-3 flex items-center gap-3">
-              {tiktokAccount?.avatar_url && (
-                <img
-                  src={tiktokAccount.avatar_url}
-                  alt={tikTokDisplayName}
-                  className="h-8 w-8 rounded-full object-cover"
-                />
-              )}
-              <div className="text-[11px] text-gray-200">
-                <p className="font-medium text-gray-100">{tikTokDisplayName}</p>
-                {tiktokAccount?.username && (
-                  <p className="text-gray-400">@{tiktokAccount.username}</p>
-                )}
-              </div>
-            </div>
-          )}
-
-          <p className="mt-3 text-[11px] text-gray-500">
+          <p className="text-[11px] text-gray-500">
             {loading
               ? "Checking TikTok connection…"
               : hasTikTok
-              ? `Last refreshed: ${lastRefreshedText}`
+              ? `Last refreshed: ${lastRefreshedLabel}`
               : "Connect to start ingesting TikTok posts and analytics."}
           </p>
 
