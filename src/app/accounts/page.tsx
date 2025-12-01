@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState, FormEvent } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { AuthGate } from "@/components/AuthGate";
+import { ConnectedAccountsSection } from "./ConnectedAccountsSection";
 
 type ConnectedAccount = {
   id: string;
@@ -45,11 +46,11 @@ function slugify(value: string): string {
 
 export default function AccountsPage() {
   const [profiles, setProfiles] = useState<CreatorProfile[]>([]);
+  const [connectedAccounts, setConnectedAccounts] = useState<ConnectedAccount[]>(
+    []
+  );
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<StatusState>({ type: "idle" });
-
-  // NEW: track current Supabase user id for TikTok connect URL
-  const [userId, setUserId] = useState<string | null>(null);
 
   // New profile form state
   const [newDisplayName, setNewDisplayName] = useState("");
@@ -57,8 +58,8 @@ export default function AccountsPage() {
   const [newBio, setNewBio] = useState("");
   const [creating, setCreating] = useState(false);
 
-  // ---------- LOAD PROFILES FOR LOGGED-IN USER ----------
-  async function loadProfiles() {
+  // ---------- LOAD PROFILES & CONNECTED ACCOUNTS FOR LOGGED-IN USER ----------
+  async function loadProfilesAndAccounts() {
     setLoading(true);
     setStatus({ type: "idle" });
 
@@ -73,15 +74,12 @@ export default function AccountsPage() {
         type: "error",
         message: "You must be logged in to view creator profiles.",
       });
-      setUserId(null);
       setLoading(false);
       return;
     }
 
-    // NEW: store user.id so we can pass it into TikTok OAuth state
-    setUserId(user.id);
-
-    const { data, error } = await supabase
+    // Load creator profiles (with any attached accounts)
+    const { data: profileData, error: profileError } = await supabase
       .from("creator_profiles")
       .select(
         `
@@ -108,8 +106,8 @@ export default function AccountsPage() {
       .eq("user_id", user.id)
       .order("created_at", { ascending: true });
 
-    if (error) {
-      console.error("Error loading creator_profiles:", error);
+    if (profileError) {
+      console.error("Error loading creator_profiles:", profileError);
       setStatus({
         type: "error",
         message: "Could not load your creator profiles.",
@@ -118,17 +116,45 @@ export default function AccountsPage() {
       return;
     }
 
-    const normalized = (data ?? []).map((p) => ({
+    const normalizedProfiles = (profileData ?? []).map((p) => ({
       ...p,
       connected_accounts: (p.connected_accounts ?? []) as ConnectedAccount[],
     }));
 
-    setProfiles(normalized);
+    setProfiles(normalizedProfiles);
+
+    // Load global connected accounts (auth layer)
+    const { data: accountsData, error: accountsError } = await supabase
+      .from("connected_accounts")
+      .select(
+        `
+        id,
+        platform,
+        username,
+        display_name,
+        external_user_id,
+        avatar_url,
+        is_primary,
+        last_refreshed_at,
+        created_at,
+        updated_at
+      `
+      )
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: true });
+
+    if (accountsError) {
+      console.error("Error loading connected_accounts:", accountsError);
+      // Do not surface a UI error yet; profiles still loaded.
+    }
+
+    setConnectedAccounts((accountsData ?? []) as ConnectedAccount[]);
     setLoading(false);
   }
 
   useEffect(() => {
-    loadProfiles();
+    loadProfilesAndAccounts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ---------- CREATE PROFILE ----------
@@ -171,7 +197,6 @@ export default function AccountsPage() {
     // 2) Else derive from display name
     // 3) Fallback to "creator" if everything fails
     const base = rawHandle || slugify(display) || "creator";
-
     const finalHandle = slugify(base);
 
     const { error } = await supabase.from("creator_profiles").insert([
@@ -204,7 +229,7 @@ export default function AccountsPage() {
     setNewBio("");
     setCreating(false);
 
-    await loadProfiles();
+    await loadProfilesAndAccounts();
   }
 
   function handleCancelNewProfile() {
@@ -248,7 +273,7 @@ export default function AccountsPage() {
             : "Refreshed TikTok data.",
       });
 
-      await loadProfiles();
+      await loadProfilesAndAccounts();
     } catch (err: any) {
       console.error("Error refreshing TikTok data:", err);
       setStatus({
@@ -290,14 +315,6 @@ export default function AccountsPage() {
 
   const hasProfiles = profiles.length > 0;
 
-  // NEW: build TikTok connect href using userId
-  const connectTikTokHref =
-    userId != null
-      ? `/api/tiktok/oauth/start?returnTo=/accounts&uid=${encodeURIComponent(
-          userId
-        )}`
-      : null;
-
   // ---------- RENDER ----------
   return (
     <AuthGate>
@@ -310,9 +327,27 @@ export default function AccountsPage() {
                 Creator Profiles & Accounts
               </h1>
               <p className="mt-1 text-sm text-gray-400">
-                Wavv’s strategy engine uses these profiles and connected accounts
-                to decide where you should post next.
+                Wavv’s strategy engine uses these profiles and connected
+                accounts to decide where you should post next. Connected
+                accounts are data sources; the strategy engine will still choose
+                which channels matter for a given goal.
               </p>
+            </div>
+
+            {/* Quick TikTok connect CTA (existing behavior) */}
+            <div className="rounded-2xl border border-gray-800 bg-gray-900/70 px-4 py-3 text-sm">
+              <p className="text-[11px] uppercase tracking-wide text-gray-400">
+                Connect TikTok
+              </p>
+              <p className="mt-1 text-xs text-gray-400">
+                Link your TikTok account so Wavv can ingest posts and analytics.
+              </p>
+              <a
+                href="/api/tiktok/oauth/start?returnTo=/accounts"
+                className="mt-2 inline-flex items-center justify-center rounded-full border border-gray-700 bg-gradient-to-r from-gray-900 to-gray-800 px-4 py-1.5 text-xs font-medium text-gray-100 shadow-sm transition hover:border-gray-400 hover:from-gray-800 hover:to-gray-700"
+              >
+                Connect TikTok
+              </a>
             </div>
           </div>
 
@@ -333,34 +368,11 @@ export default function AccountsPage() {
             </div>
           )}
 
-          {/* NEW: Connect TikTok card */}
-          <section className="mb-8 rounded-2xl border border-gray-800 bg-gray-900/60 px-5 py-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="text-[11px] uppercase tracking-wide text-gray-400">
-                Connect TikTok
-              </p>
-              <p className="mt-1 text-sm text-gray-300">
-                Link your TikTok account so Wavv can ingest posts and analytics.
-              </p>
-            </div>
-            <div>
-              <a
-                href={connectTikTokHref ?? "#"}
-                onClick={(e) => {
-                  if (!connectTikTokHref) {
-                    e.preventDefault();
-                  }
-                }}
-                className={`inline-flex items-center rounded-full border px-4 py-2 text-xs font-medium transition ${
-                  connectTikTokHref
-                    ? "border-gray-700 bg-gradient-to-r from-gray-900 to-gray-800 text-gray-100 hover:border-gray-400 hover:from-gray-800 hover:to-gray-700"
-                    : "border-gray-800 text-gray-500 cursor-not-allowed opacity-60"
-                }`}
-              >
-                Connect TikTok
-              </a>
-            </div>
-          </section>
+          {/* Global connected accounts (new Section) */}
+          <ConnectedAccountsSection
+            accounts={connectedAccounts}
+            loading={loading}
+          />
 
           {/* New creator profile form */}
           <section className="mb-8 rounded-2xl border border-gray-800 bg-gradient-to-b from-gray-950 to-gray-900 px-5 py-4">
